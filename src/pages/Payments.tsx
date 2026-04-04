@@ -5,8 +5,15 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Receipt, Printer } from 'lucide-react';
+import { Search, Receipt, Printer, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
+
+// Declare Razorpay on window (loaded from checkout.js in index.html)
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
 
 export function Payments() {
   const [students, setStudents] = useState<any[]>([]);
@@ -15,23 +22,12 @@ export function Payments() {
   const [dues, setDues] = useState<any[]>([]);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   const [receiptData, setReceiptData] = useState<any>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   
   const [paymentData, setPaymentData] = useState({ payment_method: 'cash', reference_id: '', comment: '', date: format(new Date(), 'yyyy-MM-dd') });
   const [allocations, setAllocations] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const status = params.get('payment_status');
-    const orderId = params.get('order_id');
-    if (status) {
-      if (status === 'success') {
-        alert(`Payment Successful! Order ID: ${orderId}`);
-      } else {
-        alert(`Payment failed or was cancelled.`);
-      }
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-
     if (search.length > 2) {
       api.getStudents(search).then(setStudents).catch(console.error);
     } else {
@@ -66,17 +62,82 @@ export function Payments() {
     const totalAllocated = allocationArray.reduce((sum, alloc) => sum + alloc.amount_allocated, 0);
 
     try {
-      if (paymentData.payment_method === 'phonepe') {
-        const res = await api.initiatePhonepePayment({
+      if (paymentData.payment_method === 'razorpay') {
+        // ── Razorpay Inline Modal Flow ────────────────────────
+        setIsProcessing(true);
+
+        // 1. Create order on the server via edge function
+        const orderData = await api.createRazorpayOrder({
           student_id: selectedStudent.id,
           amount: totalAllocated,
-          mobile: selectedStudent.phone,
-          allocations: allocationArray
+          allocations: allocationArray,
         });
-        window.location.href = res.redirectUrl;
+
+        // 2. Open Razorpay checkout modal
+        const options = {
+          key: orderData.key_id,
+          amount: orderData.amount,
+          currency: orderData.currency,
+          name: 'School Fee System',
+          description: `Fee payment for ${selectedStudent.name}`,
+          order_id: orderData.order_id,
+          handler: async function (response: any) {
+            // 3. After user pays, verify the signature via edge function
+            try {
+              const verifyRes = await api.verifyRazorpayPayment({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              });
+
+              // 4. Show receipt modal
+              setReceiptData({
+                transaction_id: verifyRes.transaction_id || orderData.order_id,
+                student_name: selectedStudent.name,
+                class_name: selectedStudent.class_name,
+                section: selectedStudent.section,
+                amount: totalAllocated.toString(),
+                payment_method: 'razorpay',
+                reference_id: response.razorpay_payment_id,
+                comment: `Razorpay Online Payment`,
+                date: format(new Date(), 'yyyy-MM-dd'),
+                cleared_dues: verifyRes.cleared_dues,
+              });
+              setIsReceiptOpen(true);
+              setAllocations({});
+              loadDues(selectedStudent.id);
+            } catch (verifyErr: any) {
+              console.error(verifyErr);
+              alert(verifyErr.message || 'Payment verification failed');
+            } finally {
+              setIsProcessing(false);
+            }
+          },
+          modal: {
+            ondismiss: function () {
+              setIsProcessing(false);
+            },
+          },
+          prefill: {
+            name: selectedStudent.parent_name || selectedStudent.name,
+            contact: selectedStudent.phone || '',
+            email: selectedStudent.email || '',
+          },
+          theme: {
+            color: '#2563eb', // blue-600 to match UI
+          },
+        };
+
+        const rzp = new window.Razorpay(options);
+        rzp.on('payment.failed', function (response: any) {
+          setIsProcessing(false);
+          alert(`Payment failed: ${response.error.description}`);
+        });
+        rzp.open();
         return;
       }
 
+      // ── Cash / Manual Online Flow (existing) ────────────────
       const res = await api.processPayment({
         student_id: selectedStudent.id,
         amount: totalAllocated,
@@ -312,7 +373,7 @@ export function Payments() {
                     >
                       <option value="cash">Cash</option>
                       <option value="online">Online (Manual Bank Trx)</option>
-                      <option value="phonepe">PhonePe / UPI</option>
+                      <option value="razorpay">Razorpay (Online / UPI)</option>
                     </select>
                   </div>
 
@@ -323,15 +384,25 @@ export function Payments() {
                     </div>
                   )}
 
-                  {paymentData.payment_method !== 'phonepe' && (
+                  {paymentData.payment_method !== 'razorpay' && (
                     <div className="grid gap-2">
                       <Label htmlFor="comment">Comment (Optional)</Label>
                       <Input id="comment" placeholder="e.g. Paid in full" value={paymentData.comment} onChange={e => setPaymentData({...paymentData, comment: e.target.value})} />
                     </div>
                   )}
 
-                  <Button type="submit" className="w-full h-12 text-lg font-semibold mt-4 bg-blue-600 hover:bg-blue-700 text-white">
-                    {paymentData.payment_method === 'phonepe' ? "Proceed to Pay with PhonePe" : "Process Payment"}
+                  <Button 
+                    type="submit" 
+                    className="w-full h-12 text-lg font-semibold mt-4 bg-blue-600 hover:bg-blue-700 text-white"
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Processing...</>
+                    ) : paymentData.payment_method === 'razorpay' ? (
+                      "Pay with Razorpay"
+                    ) : (
+                      "Process Payment"
+                    )}
                   </Button>
                 </form>
               </div>

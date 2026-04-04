@@ -247,10 +247,9 @@ async function processPayment(payload: {
   return data as { transaction_id: string; cleared_dues: any[] };
 }
 
-async function initiatePhonepePayment(payload: {
+async function createRazorpayOrder(payload: {
   student_id: string;
   amount: number;
-  mobile?: string;
   allocations: PaymentAllocation[];
 }) {
   const allocationsArg = payload.allocations.map(a => ({
@@ -258,19 +257,44 @@ async function initiatePhonepePayment(payload: {
     amount_allocated: a.amount_allocated,
   }));
 
-  const { data, error } = await supabase.functions.invoke('phonepe-initiate', {
+  const { data, error } = await supabase.functions.invoke('razorpay-create-order', {
     body: {
       student_id: payload.student_id,
       amount: payload.amount,
-      mobile: payload.mobile,
       allocations: allocationsArg,
     }
   });
 
   if (error) throw new Error(error.message);
-  if (!data?.success) throw new Error(data?.error || 'Failed to initiate payment');
+  if (!data?.success) throw new Error(data?.error || 'Failed to create Razorpay order');
   
-  return data as { success: boolean; redirectUrl: string; transaction_id: string };
+  return data as {
+    success: boolean;
+    order_id: string;
+    amount: number;
+    currency: string;
+    key_id: string;
+    intent_id: string;
+  };
+}
+
+async function verifyRazorpayPayment(payload: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}) {
+  const { data, error } = await supabase.functions.invoke('razorpay-verify', {
+    body: payload,
+  });
+
+  if (error) throw new Error(error.message);
+  if (!data?.success) throw new Error(data?.error || 'Payment verification failed');
+  
+  return data as {
+    success: boolean;
+    transaction_id: string;
+    cleared_dues: any[];
+  };
 }
 
 // ─── Dashboard ────────────────────────────────────────────────
@@ -391,7 +415,8 @@ export const api = {
 
   // Payments
   processPayment,
-  initiatePhonepePayment,
+  createRazorpayOrder,
+  verifyRazorpayPayment,
 
   // Dashboard & Reports
   getDashboard,

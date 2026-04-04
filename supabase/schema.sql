@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS transaction_allocations (
 
 CREATE TABLE IF NOT EXISTS payment_intents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gateway_order_id TEXT UNIQUE,
   student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
   allocations JSONB NOT NULL,
