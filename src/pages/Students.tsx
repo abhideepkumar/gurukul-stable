@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '@/src/lib/api';
+import { api, DEFAULT_PAGE_SIZE, type PaginatedResult } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/src/components/ui/label';
 import { Search, Plus, Trash2, Edit } from 'lucide-react';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
+import { Pagination } from '../components/ui/Pagination';
+import { useDebounce } from '../hooks/use-debounce';
 
 export function Students() {
   const [students, setStudents] = useState<any[]>([]);
@@ -20,9 +22,19 @@ export function Students() {
   const [formData, setFormData] = useState({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
   const [selectedFeeStructures, setSelectedFeeStructures] = useState<string[]>([]);
   const [error, setError] = useState<Error | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalStudents, setTotalStudents] = useState(0);
+
+  const debouncedSearch = useDebounce(search, 300);
 
   const loadStudents = () => {
-    api.getStudents(search, classId).then(setStudents).catch(setError);
+    api.getStudents(debouncedSearch, classId, page, DEFAULT_PAGE_SIZE)
+      .then((res) => {
+        const result = res as PaginatedResult<any>;
+        setStudents(result.data);
+        setTotalStudents(result.total);
+      })
+      .catch(setError);
   };
 
   const loadClasses = () => {
@@ -49,7 +61,12 @@ export function Students() {
 
   useEffect(() => {
     loadStudents();
-  }, [search, classId]);
+  }, [debouncedSearch, classId, page]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, classId]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -197,6 +214,14 @@ export function Students() {
           </TableBody>
         </Table>
       </div>
+
+      <Pagination
+        currentPage={page}
+        totalPages={Math.ceil(totalStudents / DEFAULT_PAGE_SIZE)}
+        totalItems={totalStudents}
+        pageSize={DEFAULT_PAGE_SIZE}
+        onPageChange={setPage}
+      />
 
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent>

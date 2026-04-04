@@ -8,6 +8,13 @@ function throwOnError<T>(data: T | null, error: { message: string } | null): T {
 }
 
 // ─── Types ───────────────────────────────────────────────────
+export const DEFAULT_PAGE_SIZE = 20;
+
+export interface PaginatedResult<T> {
+  data: T[];
+  total: number;
+}
+
 export interface PaymentAllocation {
   due_id: string;
   amount_allocated: number;
@@ -92,25 +99,33 @@ async function deleteFeeStructure(id: string) {
 }
 
 // ─── Students ────────────────────────────────────────────────
-async function getStudents(search?: string, classId?: string) {
+async function getStudents(search?: string, classId?: string, page?: number, limit?: number): Promise<any[] | PaginatedResult<any>> {
   const currentMonthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
   const currentMonthEnd   = format(endOfMonth(new Date()), 'yyyy-MM-dd');
+
+  const paginated = page !== undefined && limit !== undefined;
 
   // Fetch students with their class name
   let query = supabase
     .from('students')
-    .select('*, classes(name)')
+    .select('*, classes(name)', paginated ? { count: 'exact' } : {})
     .order('name', { ascending: true });
 
   if (search) query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
   if (classId) query = query.eq('class_id', classId);
 
-  const { data: students, error: studentsError } = await query;
+  if (paginated) {
+    const from = (page! - 1) * limit!;
+    const to   = page! * limit! - 1;
+    query = query.range(from, to);
+  }
+
+  const { data: students, error: studentsError, count } = await query;
   if (studentsError) throw new Error(studentsError.message);
 
   // Fetch dues separately to compute aggregates
   const studentIds = (students ?? []).map((s: any) => s.id);
-  if (studentIds.length === 0) return [];
+  if (studentIds.length === 0) return paginated ? { data: [], total: 0 } : [];
 
   const { data: dues, error: duesError } = await supabase
     .from('dues')
@@ -120,7 +135,7 @@ async function getStudents(search?: string, classId?: string) {
   if (duesError) throw new Error(duesError.message);
 
   // Aggregate per student
-  return (students ?? []).map((student: any) => {
+  const enriched = (students ?? []).map((student: any) => {
     const studentDues = (dues ?? []).filter((d: any) => d.student_id === student.id);
     let overdue_amount = 0;
     let current_month_due = 0;
@@ -147,6 +162,8 @@ async function getStudents(search?: string, classId?: string) {
       pending_amount,
     };
   });
+
+  return paginated ? { data: enriched, total: count ?? 0 } : enriched;
 }
 
 async function addStudent(payload: {
@@ -370,26 +387,37 @@ async function getDefaulters() {
     .sort((a, b) => b.pending_amount - a.pending_amount);
 }
 
-async function getTransactions(startDate?: string, endDate?: string) {
+async function getTransactions(startDate?: string, endDate?: string, page?: number, limit?: number): Promise<any[] | PaginatedResult<any>> {
+  const paginated = page !== undefined && limit !== undefined;
+
   let query = supabase
     .from('transactions')
-    .select(`
-      *, students!inner(name, classes!inner(name))
-    `)
+    .select(
+      `*, students!inner(name, classes!inner(name))`,
+      paginated ? { count: 'exact' } : {},
+    )
     .order('date', { ascending: false });
 
   if (startDate && endDate) {
     query = query.gte('date', startDate).lte('date', endDate);
   }
 
-  const { data, error } = await query;
+  if (paginated) {
+    const from = (page! - 1) * limit!;
+    const to   = page! * limit! - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((t: any) => ({
+  const mapped = (data ?? []).map((t: any) => ({
     ...t,
     student_name: t.students?.name,
     class_name:   t.students?.classes?.name,
   }));
+
+  return paginated ? { data: mapped, total: count ?? 0 } : mapped;
 }
 
 // ─── Exported API object ──────────────────────────────────────

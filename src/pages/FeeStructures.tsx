@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { api } from '@/src/lib/api';
+import React, { useEffect, useState, useMemo } from 'react';
+import { api, DEFAULT_PAGE_SIZE } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
@@ -7,12 +7,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/src/components/ui/label';
 import { Plus, Trash2 } from 'lucide-react';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
+import { Pagination } from '../components/ui/Pagination';
 
 export function FeeStructures() {
   const [fees, setFees] = useState<any[]>([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [formData, setFormData] = useState({ name: '', amount: '', frequency: 'monthly' });
   const [error, setError] = useState<Error | null>(null);
+  const [page, setPage] = useState(1);
+
+  const paginatedFees = useMemo(() => {
+    const from = (page - 1) * DEFAULT_PAGE_SIZE;
+    return fees.slice(from, from + DEFAULT_PAGE_SIZE);
+  }, [fees, page]);
 
   const loadFees = () => {
     api.getFeeStructures().then(setFees).catch(setError);
@@ -71,7 +78,7 @@ export function FeeStructures() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {fees.map((fee) => (
+            {paginatedFees.map((fee) => (
               <TableRow key={fee.id}>
                 <TableCell className="font-medium">{fee.name}</TableCell>
                 <TableCell>₹{fee.amount.toLocaleString()}</TableCell>
@@ -95,6 +102,14 @@ export function FeeStructures() {
           </TableBody>
         </Table>
       </div>
+
+      <Pagination
+        currentPage={page}
+        totalPages={Math.ceil(fees.length / DEFAULT_PAGE_SIZE)}
+        totalItems={fees.length}
+        pageSize={DEFAULT_PAGE_SIZE}
+        onPageChange={setPage}
+      />
 
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
         <DialogContent>

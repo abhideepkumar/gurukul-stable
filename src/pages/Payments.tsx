@@ -8,6 +8,7 @@ import { Label } from '@/src/components/ui/label';
 import { Search, Receipt, Printer, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
+import { useDebounce } from '../hooks/use-debounce';
 
 // Declare Razorpay on window (loaded from checkout.js in index.html)
 declare global {
@@ -29,13 +30,15 @@ export function Payments() {
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [error, setError] = useState<Error | null>(null);
 
+  const debouncedSearch = useDebounce(search, 300);
+
   useEffect(() => {
-    if (search.length > 2) {
-      api.getStudents(search).then(setStudents).catch(setError);
+    if (debouncedSearch.length > 2) {
+      api.getStudents(debouncedSearch).then(res => setStudents(res as any[])).catch(setError);
     } else {
       setStudents([]);
     }
-  }, [search]);
+  }, [debouncedSearch]);
 
   const loadDues = (studentId: string) => {
     api.getStudentDues(studentId).then(setDues).catch(setError);

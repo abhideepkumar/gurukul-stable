@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '@/src/lib/api';
+import React, { useState, useEffect, useMemo } from 'react';
+import { api, DEFAULT_PAGE_SIZE } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { Label } from '@/src/components/ui/label';
@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/src/components/ui/dialog';
 import { Plus, Trash2, Settings } from 'lucide-react';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
+import { Pagination } from '../components/ui/Pagination';
 
 export default function Classes() {
   const [classes, setClasses] = useState<any[]>([]);
@@ -20,6 +21,12 @@ export default function Classes() {
   const [isDefaultsOpen, setIsDefaultsOpen] = useState(false);
   const [selectedFeeId, setSelectedFeeId] = useState('');
   const [error, setError] = useState<Error | null>(null);
+  const [page, setPage] = useState(1);
+
+  const paginatedClasses = useMemo(() => {
+    const from = (page - 1) * DEFAULT_PAGE_SIZE;
+    return classes.slice(from, from + DEFAULT_PAGE_SIZE);
+  }, [classes, page]);
 
   useEffect(() => {
     loadClasses();
@@ -139,7 +146,7 @@ export default function Classes() {
                   </TableCell>
                 </TableRow>
               ) : (
-                classes.map((cls) => (
+                paginatedClasses.map((cls) => (
                   <TableRow key={cls.id}>
                     <TableCell className="font-medium">{cls.name}</TableCell>
                     <TableCell className="text-right">
@@ -155,6 +162,14 @@ export default function Classes() {
           </Table>
         </CardContent>
       </Card>
+
+      <Pagination
+        currentPage={page}
+        totalPages={Math.ceil(classes.length / DEFAULT_PAGE_SIZE)}
+        totalItems={classes.length}
+        pageSize={DEFAULT_PAGE_SIZE}
+        onPageChange={setPage}
+      />
 
       <Dialog open={isDefaultsOpen} onOpenChange={setIsDefaultsOpen}>
         <DialogContent className="max-w-2xl">

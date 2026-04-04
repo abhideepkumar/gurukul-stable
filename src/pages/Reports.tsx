@@ -1,27 +1,60 @@
-import { useEffect, useState } from 'react';
-import { api } from '@/src/lib/api';
+import { useEffect, useState, useMemo } from 'react';
+import { api, DEFAULT_PAGE_SIZE, type PaginatedResult } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Download } from 'lucide-react';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
+import { Pagination } from '../components/ui/Pagination';
 
 export function Reports() {
   const [activeTab, setActiveTab] = useState<'defaulters' | 'transactions'>('defaulters');
-  const [defaulters, setDefaulters] = useState<any[]>([]);
+
+  // ── Defaulters (client-side pagination — data is aggregated in JS) ──
+  const [allDefaulters, setAllDefaulters] = useState<any[]>([]);
+  const [defPage, setDefPage] = useState(1);
+
+  // ── Transactions (server-side pagination) ──
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [txPage, setTxPage] = useState(1);
+  const [txTotal, setTxTotal] = useState(0);
+
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [error, setError] = useState<Error | null>(null);
 
+  // ── Load defaulters (all at once — aggregation happens in api.ts) ──
   useEffect(() => {
     if (activeTab === 'defaulters') {
-      api.getDefaulters().then(setDefaulters).catch(setError);
-    } else {
-      loadTransactions();
+      api.getDefaulters().then(setAllDefaulters).catch(setError);
     }
   }, [activeTab]);
 
+  // Client-side paginated slice for defaulters
+  const paginatedDefaulters = useMemo(() => {
+    const from = (defPage - 1) * DEFAULT_PAGE_SIZE;
+    return allDefaulters.slice(from, from + DEFAULT_PAGE_SIZE);
+  }, [allDefaulters, defPage]);
+
+  // ── Load transactions (server-side pagination) ──
   const loadTransactions = () => {
-    api.getTransactions(dateRange.start, dateRange.end).then(setTransactions).catch(setError);
+    api.getTransactions(dateRange.start, dateRange.end, txPage, DEFAULT_PAGE_SIZE)
+      .then((res) => {
+        const result = res as PaginatedResult<any>;
+        setTransactions(result.data);
+        setTxTotal(result.total);
+      })
+      .catch(setError);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'transactions') {
+      loadTransactions();
+    }
+  }, [activeTab, txPage]);
+
+  // Reset tx page when filters applied manually
+  const handleFilter = () => {
+    setTxPage(1);
+    loadTransactions();
   };
 
   // Sanitize a CSV cell to prevent CSV injection (formula injection).
@@ -46,7 +79,7 @@ export function Reports() {
     
     if (activeTab === 'defaulters') {
       rows.push(["Name", "Class", "Phone", "Overdue Amount"]);
-      defaulters.forEach(d => {
+      allDefaulters.forEach(d => {
         rows.push([
           sanitizeCSVCell(d.name),
           sanitizeCSVCell(d.class_name),
@@ -110,40 +143,49 @@ export function Reports() {
       </div>
 
       {activeTab === 'defaulters' ? (
-        <div className="rounded-md border border-slate-200 bg-white">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Student Name</TableHead>
-                <TableHead>Class</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead className="text-right">Overdue Amount</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {defaulters.map((student) => (
-                <TableRow key={student.id}>
-                  <TableCell className="font-medium">{student.name}</TableCell>
-                  <TableCell>{student.class_name}</TableCell>
-                  <TableCell>{student.phone}</TableCell>
-                  <TableCell className="text-right font-medium text-red-600">
-                    ₹{student.overdue_amount.toLocaleString()}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {defaulters.length === 0 && (
+        <div className="space-y-0">
+          <div className="rounded-md border border-slate-200 bg-white">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center text-slate-500">
-                    No defaulters found.
-                  </TableCell>
+                  <TableHead>Student Name</TableHead>
+                  <TableHead>Class</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead className="text-right">Overdue Amount</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {paginatedDefaulters.map((student) => (
+                  <TableRow key={student.id}>
+                    <TableCell className="font-medium">{student.name}</TableCell>
+                    <TableCell>{student.class_name}</TableCell>
+                    <TableCell>{student.phone}</TableCell>
+                    <TableCell className="text-right font-medium text-red-600">
+                      ₹{student.pending_amount.toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {allDefaulters.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-24 text-center text-slate-500">
+                      No defaulters found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <Pagination
+            currentPage={defPage}
+            totalPages={Math.ceil(allDefaulters.length / DEFAULT_PAGE_SIZE)}
+            totalItems={allDefaulters.length}
+            pageSize={DEFAULT_PAGE_SIZE}
+            onPageChange={setDefPage}
+          />
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="flex gap-4">
+        <div className="space-y-0">
+          <div className="flex gap-4 mb-4">
             <input 
               type="date" 
               className="rounded-md border border-slate-200 px-3 py-2 text-sm"
@@ -156,7 +198,7 @@ export function Reports() {
               value={dateRange.end}
               onChange={e => setDateRange({...dateRange, end: e.target.value})}
             />
-            <Button variant="secondary" onClick={loadTransactions}>Filter</Button>
+            <Button variant="secondary" onClick={handleFilter}>Filter</Button>
           </div>
           <div className="rounded-md border border-slate-200 bg-white">
             <Table>
@@ -191,6 +233,13 @@ export function Reports() {
               </TableBody>
             </Table>
           </div>
+          <Pagination
+            currentPage={txPage}
+            totalPages={Math.ceil(txTotal / DEFAULT_PAGE_SIZE)}
+            totalItems={txTotal}
+            pageSize={DEFAULT_PAGE_SIZE}
+            onPageChange={setTxPage}
+          />
         </div>
       )}
     </div>
