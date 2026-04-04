@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS transaction_allocations (
   amount_applied NUMERIC(12, 2) NOT NULL CHECK (amount_applied > 0)
 );
 
+CREATE TABLE IF NOT EXISTS payment_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+  allocations JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 
 -- ============================================================
 -- ROW LEVEL SECURITY
@@ -97,6 +106,7 @@ ALTER TABLE student_fee_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dues ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transaction_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_intents ENABLE ROW LEVEL SECURITY;
 
 
 -- ============================================================
@@ -143,6 +153,9 @@ CREATE POLICY "anon can select student_fee_assignments" ON student_fee_assignmen
 CREATE POLICY "anon can select dues"                    ON dues                    FOR SELECT TO anon USING (true);
 CREATE POLICY "anon can select transactions"            ON transactions            FOR SELECT TO anon USING (true);
 CREATE POLICY "anon can select transaction_allocations" ON transaction_allocations FOR SELECT TO anon USING (true);
+CREATE POLICY "anon can select payment_intents"         ON payment_intents         FOR SELECT TO anon USING (true);
+CREATE POLICY "anon can insert payment_intents"         ON payment_intents         FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "anon can update payment_intents"         ON payment_intents         FOR UPDATE TO anon USING (true);
 
 
 -- ============================================================

@@ -247,6 +247,32 @@ async function processPayment(payload: {
   return data as { transaction_id: string; cleared_dues: any[] };
 }
 
+async function initiatePhonepePayment(payload: {
+  student_id: string;
+  amount: number;
+  mobile?: string;
+  allocations: PaymentAllocation[];
+}) {
+  const allocationsArg = payload.allocations.map(a => ({
+    due_id:           a.due_id,
+    amount_allocated: a.amount_allocated,
+  }));
+
+  const { data, error } = await supabase.functions.invoke('phonepe-initiate', {
+    body: {
+      student_id: payload.student_id,
+      amount: payload.amount,
+      mobile: payload.mobile,
+      allocations: allocationsArg,
+    }
+  });
+
+  if (error) throw new Error(error.message);
+  if (!data?.success) throw new Error(data?.error || 'Failed to initiate payment');
+  
+  return data as { success: boolean; redirectUrl: string; transaction_id: string };
+}
+
 // ─── Dashboard ────────────────────────────────────────────────
 async function getDashboard() {
   const currentMonthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
@@ -365,6 +391,7 @@ export const api = {
 
   // Payments
   processPayment,
+  initiatePhonepePayment,
 
   // Dashboard & Reports
   getDashboard,

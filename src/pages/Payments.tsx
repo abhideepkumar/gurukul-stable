@@ -20,6 +20,18 @@ export function Payments() {
   const [allocations, setAllocations] = useState<Record<string, number>>({});
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('payment_status');
+    const orderId = params.get('order_id');
+    if (status) {
+      if (status === 'success') {
+        alert(`Payment Successful! Order ID: ${orderId}`);
+      } else {
+        alert(`Payment failed or was cancelled.`);
+      }
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
     if (search.length > 2) {
       api.getStudents(search).then(setStudents).catch(console.error);
     } else {
@@ -54,6 +66,17 @@ export function Payments() {
     const totalAllocated = allocationArray.reduce((sum, alloc) => sum + alloc.amount_allocated, 0);
 
     try {
+      if (paymentData.payment_method === 'phonepe') {
+        const res = await api.initiatePhonepePayment({
+          student_id: selectedStudent.id,
+          amount: totalAllocated,
+          mobile: selectedStudent.phone,
+          allocations: allocationArray
+        });
+        window.location.href = res.redirectUrl;
+        return;
+      }
+
       const res = await api.processPayment({
         student_id: selectedStudent.id,
         amount: totalAllocated,
@@ -288,7 +311,8 @@ export function Payments() {
                       onChange={e => setPaymentData({...paymentData, payment_method: e.target.value})}
                     >
                       <option value="cash">Cash</option>
-                      <option value="online">Online</option>
+                      <option value="online">Online (Manual Bank Trx)</option>
+                      <option value="phonepe">PhonePe / UPI</option>
                     </select>
                   </div>
 
@@ -299,13 +323,15 @@ export function Payments() {
                     </div>
                   )}
 
-                  <div className="grid gap-2">
-                    <Label htmlFor="comment">Comment (Optional)</Label>
-                    <Input id="comment" placeholder="e.g. Paid in full" value={paymentData.comment} onChange={e => setPaymentData({...paymentData, comment: e.target.value})} />
-                  </div>
+                  {paymentData.payment_method !== 'phonepe' && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="comment">Comment (Optional)</Label>
+                      <Input id="comment" placeholder="e.g. Paid in full" value={paymentData.comment} onChange={e => setPaymentData({...paymentData, comment: e.target.value})} />
+                    </div>
+                  )}
 
-                  <Button type="submit" className="w-full h-12 text-lg font-semibold mt-4">
-                    Process Payment
+                  <Button type="submit" className="w-full h-12 text-lg font-semibold mt-4 bg-blue-600 hover:bg-blue-700 text-white">
+                    {paymentData.payment_method === 'phonepe' ? "Proceed to Pay with PhonePe" : "Process Payment"}
                   </Button>
                 </form>
               </div>
