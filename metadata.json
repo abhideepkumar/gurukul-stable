@@ -1,5 +1,9 @@
 {
-  "name": "",
-  "description": "",
-  "requestFramePermissions": []
+  "name": "Gurukul",
+  "institution": "Delhi Republic School",
+  "description": "A comprehensive School Fees Management System for Delhi Republic School, built with React 19, Supabase, and Razorpay.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
 }
