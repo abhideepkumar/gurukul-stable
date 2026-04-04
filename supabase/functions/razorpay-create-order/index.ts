@@ -18,6 +18,35 @@ serve(async (req) => {
   }
 
   try {
+    // ── AUTH CHECK ─────────────────────────────────────────────
+    // Verify the caller has a valid Supabase session.
+    // The frontend's supabase-js client automatically attaches
+    // the user's JWT in the Authorization header.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Missing authorization header" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    // Create a client scoped to the user's JWT to verify identity
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // ── END AUTH CHECK ─────────────────────────────────────────
+
     const { student_id, amount, allocations } = await req.json();
 
     // ── Validate inputs ──────────────────────────────────────
@@ -39,12 +68,11 @@ serve(async (req) => {
       throw new Error("Razorpay credentials not configured on the server");
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    // Use service role for DB operations (bypasses RLS)
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // ── Create a payment_intent row first ────────────────────
-    // We create it BEFORE calling Razorpay so we have a receipt ID.
     const { data: intentData, error: intentError } = await supabase
       .from("payment_intents")
       .insert({
@@ -60,13 +88,10 @@ serve(async (req) => {
       throw new Error(`DB Error: ${intentError.message}`);
     }
 
-    const receiptId = intentData.id; // Our UUID — used as Razorpay receipt
+    const receiptId = intentData.id;
 
     // ── Call Razorpay Orders API ──────────────────────────────
-    // https://razorpay.com/docs/api/orders/#create-an-order
-    // Amount must be in paise (smallest currency unit).
     const amountInPaise = Math.round(amount * 100);
-
     const basicAuth = btoa(`${razorpayKeyId}:${razorpayKeySecret}`);
 
     const razorpayRes = await fetch("https://api.razorpay.com/v1/orders", {
@@ -113,14 +138,13 @@ serve(async (req) => {
     }
 
     // ── Return data to frontend ──────────────────────────────
-    // Frontend needs: order_id, amount, currency, and the KEY_ID (public key)
     return new Response(
       JSON.stringify({
         success: true,
         order_id: razorpayOrder.id,
         amount: razorpayOrder.amount,
         currency: razorpayOrder.currency,
-        key_id: razorpayKeyId, // Public key — safe to send to frontend
+        key_id: razorpayKeyId,
         intent_id: receiptId,
       }),
       {

@@ -22,28 +22,60 @@ export function Reports() {
     api.getTransactions(dateRange.start, dateRange.end).then(setTransactions).catch(console.error);
   };
 
+  // Sanitize a CSV cell to prevent CSV injection (formula injection).
+  // Values starting with =, +, -, @, \t, \r can execute formulas in Excel.
+  const sanitizeCSVCell = (value: any): string => {
+    const str = String(value ?? '');
+    // Prefix dangerous characters with a single quote to neutralize them
+    const dangerous = ['=', '+', '-', '@', '\t', '\r'];
+    let safe = str;
+    if (dangerous.some(ch => safe.startsWith(ch))) {
+      safe = `'${safe}`;
+    }
+    // Escape double quotes and wrap in quotes if it contains commas, quotes, or newlines
+    if (safe.includes('"') || safe.includes(',') || safe.includes('\n')) {
+      safe = `"${safe.replace(/"/g, '""')}"`;
+    }
+    return safe;
+  };
+
   const handleExportCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,";
+    const rows: string[][] = [];
     
     if (activeTab === 'defaulters') {
-      csvContent += "Name,Class,Phone,Overdue Amount\n";
+      rows.push(["Name", "Class", "Phone", "Overdue Amount"]);
       defaulters.forEach(d => {
-        csvContent += `${d.name},${d.class_name},${d.phone},${d.overdue_amount}\n`;
+        rows.push([
+          sanitizeCSVCell(d.name),
+          sanitizeCSVCell(d.class_name),
+          sanitizeCSVCell(d.phone),
+          sanitizeCSVCell(d.overdue_amount),
+        ]);
       });
     } else {
-      csvContent += "Date,Student Name,Class,Amount,Method,Reference ID\n";
+      rows.push(["Date", "Student Name", "Class", "Amount", "Method", "Reference ID"]);
       transactions.forEach(t => {
-        csvContent += `${t.date},${t.student_name},${t.class_name},${t.amount},${t.payment_method},${t.reference_id || ''}\n`;
+        rows.push([
+          sanitizeCSVCell(t.date),
+          sanitizeCSVCell(t.student_name),
+          sanitizeCSVCell(t.class_name),
+          sanitizeCSVCell(t.amount),
+          sanitizeCSVCell(t.payment_method),
+          sanitizeCSVCell(t.reference_id || ''),
+        ]);
       });
     }
 
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = rows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", `${activeTab}_report.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (

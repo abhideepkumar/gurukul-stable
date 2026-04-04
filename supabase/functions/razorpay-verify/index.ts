@@ -22,7 +22,6 @@ async function hmacSha256Hex(
 ): Promise<string> {
   const encoder = new TextEncoder();
 
-  // Import the secret as a CryptoKey
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secret),
@@ -31,14 +30,12 @@ async function hmacSha256Hex(
     ["sign"]
   );
 
-  // Sign the message
   const signature = await crypto.subtle.sign(
     "HMAC",
     key,
     encoder.encode(message)
   );
 
-  // Convert ArrayBuffer to hex string
   return Array.from(new Uint8Array(signature))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -51,6 +48,31 @@ serve(async (req) => {
   }
 
   try {
+    // ── AUTH CHECK ─────────────────────────────────────────────
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Missing authorization header" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // ── END AUTH CHECK ─────────────────────────────────────────
+
     const {
       razorpay_order_id,
       razorpay_payment_id,
@@ -71,8 +93,6 @@ serve(async (req) => {
     }
 
     // ── Verify signature ─────────────────────────────────────
-    // Razorpay docs: HMAC_SHA256(order_id + "|" + payment_id, key_secret)
-    // https://razorpay.com/docs/payments/server-integration/nodejs/payment-gateway/build-integration/
     const expectedSignature = await hmacSha256Hex(
       razorpayKeySecret,
       `${razorpay_order_id}|${razorpay_payment_id}`
@@ -83,7 +103,6 @@ serve(async (req) => {
     }
 
     // ── Signature is valid — process the payment ─────────────
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -115,8 +134,6 @@ serve(async (req) => {
     }
 
     // ── Call process_payment RPC ──────────────────────────────
-    // This atomically creates the transaction, allocations, and
-    // updates dues — using SERVICE_ROLE_KEY to bypass RLS.
     const allocations =
       typeof record.allocations === "string"
         ? JSON.parse(record.allocations)
@@ -139,7 +156,6 @@ serve(async (req) => {
 
     if (rpcError) {
       console.error("RPC process_payment error:", rpcError);
-      // Mark as failed if RPC fails
       await supabase
         .from("payment_intents")
         .update({ status: "failed" })
