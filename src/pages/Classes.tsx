@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/src
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/src/components/ui/dialog';
 import { Plus, Trash2, Settings } from 'lucide-react';
+import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export default function Classes() {
   const [classes, setClasses] = useState<any[]>([]);
@@ -18,6 +19,7 @@ export default function Classes() {
   const [classDefaults, setClassDefaults] = useState<any[]>([]);
   const [isDefaultsOpen, setIsDefaultsOpen] = useState(false);
   const [selectedFeeId, setSelectedFeeId] = useState('');
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     loadClasses();
@@ -28,8 +30,8 @@ export default function Classes() {
     try {
       const data = await api.getClasses();
       setClasses(data);
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      setError(error);
     }
   };
 
@@ -37,8 +39,8 @@ export default function Classes() {
     try {
       const data = await api.getFeeStructures();
       setFeeStructures(data);
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      setError(error);
     }
   };
 
@@ -87,6 +89,8 @@ export default function Classes() {
       alert('Failed to remove default fee');
     }
   };
+
+  if (error) return <ErrorSkeleton error={error} />;
 
   return (
     <div className="space-y-6">

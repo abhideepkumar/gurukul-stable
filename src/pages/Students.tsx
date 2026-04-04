@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
 import { Search, Plus, Trash2, Edit } from 'lucide-react';
+import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export function Students() {
   const [students, setStudents] = useState<any[]>([]);
@@ -18,14 +19,15 @@ export function Students() {
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
   const [selectedFeeStructures, setSelectedFeeStructures] = useState<string[]>([]);
+  const [error, setError] = useState<Error | null>(null);
 
   const loadStudents = () => {
-    api.getStudents(search, classId).then(setStudents).catch(console.error);
+    api.getStudents(search, classId).then(setStudents).catch(setError);
   };
 
   const loadClasses = () => {
-    api.getClasses().then(setClasses).catch(console.error);
-    api.getFeeStructures().then(setFeeStructures).catch(console.error);
+    api.getClasses().then(setClasses).catch(setError);
+    api.getFeeStructures().then(setFeeStructures).catch(setError);
   };
 
   // Watch for class_id changes in Add Student dialog to load defaults
@@ -104,6 +106,8 @@ export function Students() {
       alert('Failed to delete student');
     }
   };
+
+  if (error) return <ErrorSkeleton error={error} />;
 
   return (
     <div className="space-y-6">

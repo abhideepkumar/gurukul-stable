@@ -3,23 +3,25 @@ import { api } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Download } from 'lucide-react';
+import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export function Reports() {
   const [activeTab, setActiveTab] = useState<'defaulters' | 'transactions'>('defaulters');
   const [defaulters, setDefaulters] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (activeTab === 'defaulters') {
-      api.getDefaulters().then(setDefaulters).catch(console.error);
+      api.getDefaulters().then(setDefaulters).catch(setError);
     } else {
       loadTransactions();
     }
   }, [activeTab]);
 
   const loadTransactions = () => {
-    api.getTransactions(dateRange.start, dateRange.end).then(setTransactions).catch(console.error);
+    api.getTransactions(dateRange.start, dateRange.end).then(setTransactions).catch(setError);
   };
 
   // Sanitize a CSV cell to prevent CSV injection (formula injection).
@@ -77,6 +79,8 @@ export function Reports() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
+  if (error) return <ErrorSkeleton error={error} />;
 
   return (
     <div className="space-y-6">

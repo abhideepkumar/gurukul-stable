@@ -15,6 +15,7 @@ import { Payments } from './pages/Payments';
 import { Reports } from './pages/Reports';
 import Classes from './pages/Classes';
 import { Loader2 } from 'lucide-react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { session, isLoading } = useAuth();
@@ -37,26 +38,28 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<Dashboard />} />
-            <Route path="classes" element={<Classes />} />
-            <Route path="students" element={<Students />} />
-            <Route path="fees" element={<FeeStructures />} />
-            <Route path="payments" element={<Payments />} />
-            <Route path="reports" element={<Reports />} />
-          </Route>
-        </Routes>
-      </AuthProvider>
+      <ErrorBoundary>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Dashboard />} />
+              <Route path="classes" element={<Classes />} />
+              <Route path="students" element={<Students />} />
+              <Route path="fees" element={<FeeStructures />} />
+              <Route path="payments" element={<Payments />} />
+              <Route path="reports" element={<Reports />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

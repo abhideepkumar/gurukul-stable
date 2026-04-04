@@ -2,14 +2,17 @@ import { useEffect, useState } from 'react';
 import { api } from '@/src/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/src/components/ui/card';
 import { IndianRupee, Users, TrendingUp, AlertCircle } from 'lucide-react';
+import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export function Dashboard() {
   const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    api.getDashboard().then(setData).catch(console.error);
+    api.getDashboard().then(setData).catch(setError);
   }, []);
 
+  if (error) return <ErrorSkeleton error={error} />;
   if (!data) return <div>Loading...</div>;
 
   return (

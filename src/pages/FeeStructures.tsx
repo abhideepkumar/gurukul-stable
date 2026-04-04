@@ -6,14 +6,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
 import { Plus, Trash2 } from 'lucide-react';
+import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export function FeeStructures() {
   const [fees, setFees] = useState<any[]>([]);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [formData, setFormData] = useState({ name: '', amount: '', frequency: 'monthly' });
+  const [error, setError] = useState<Error | null>(null);
 
   const loadFees = () => {
-    api.getFeeStructures().then(setFees).catch(console.error);
+    api.getFeeStructures().then(setFees).catch(setError);
   };
 
   useEffect(() => {
@@ -43,6 +45,8 @@ export function FeeStructures() {
       alert('Failed to delete fee structure');
     }
   };
+
+  if (error) return <ErrorSkeleton error={error} />;
 
   return (
     <div className="space-y-6">

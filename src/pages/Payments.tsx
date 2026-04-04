@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '@/src/components/ui/label';
 import { Search, Receipt, Printer, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 // Declare Razorpay on window (loaded from checkout.js in index.html)
 declare global {
@@ -26,17 +27,18 @@ export function Payments() {
   
   const [paymentData, setPaymentData] = useState({ payment_method: 'cash', reference_id: '', comment: '', date: format(new Date(), 'yyyy-MM-dd') });
   const [allocations, setAllocations] = useState<Record<string, number>>({});
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     if (search.length > 2) {
-      api.getStudents(search).then(setStudents).catch(console.error);
+      api.getStudents(search).then(setStudents).catch(setError);
     } else {
       setStudents([]);
     }
   }, [search]);
 
   const loadDues = (studentId: string) => {
-    api.getStudentDues(studentId).then(setDues).catch(console.error);
+    api.getStudentDues(studentId).then(setDues).catch(setError);
   };
 
   const handleSelectStudent = (student: any) => {
@@ -214,6 +216,8 @@ export function Payments() {
   const handlePrint = () => {
     window.print();
   };
+
+  if (error) return <ErrorSkeleton error={error} />;
 
   return (
     <div className="space-y-6">
