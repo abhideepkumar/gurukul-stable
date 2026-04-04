@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Receipt, CreditCard, FileText, School, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, Receipt, CreditCard, FileText, School, LogOut, Tag, Clock } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useAuth } from '@/src/lib/auth';
 import { useState } from 'react';
@@ -9,6 +9,8 @@ const navItems = [
   { name: 'Classes', href: '/classes', icon: School },
   { name: 'Students', href: '/students', icon: Users },
   { name: 'Fee Structures', href: '/fees', icon: Receipt },
+  { name: 'Discounts', href: '/discounts', icon: Tag },
+  { name: 'Late Fees', href: '/late-fees', icon: Clock },
   { name: 'Payments', href: '/payments', icon: CreditCard },
   { name: 'Reports', href: '/reports', icon: FileText },
 ];

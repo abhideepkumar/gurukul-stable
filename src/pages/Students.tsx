@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Plus, Trash2, Edit } from 'lucide-react';
+import { Search, Plus, Trash2, Edit, Tag, X } from 'lucide-react';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
 import { useDebounce } from '../hooks/use-debounce';
@@ -24,6 +24,13 @@ export function Students() {
   const [error, setError] = useState<Error | null>(null);
   const [page, setPage] = useState(1);
   const [totalStudents, setTotalStudents] = useState(0);
+
+  // Discount management for a student
+  const [isDiscountOpen, setIsDiscountOpen] = useState(false);
+  const [discountStudent, setDiscountStudent] = useState<any>(null);
+  const [studentDiscounts, setStudentDiscounts] = useState<any[]>([]);
+  const [allDiscounts, setAllDiscounts] = useState<any[]>([]);
+  const [discountForm, setDiscountForm] = useState({ discount_id: '', fee_structure_id: '', effective_from: '', effective_until: '', notes: '' });
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -124,6 +131,56 @@ export function Students() {
     }
   };
 
+  const openDiscountDialog = async (student: any) => {
+    setDiscountStudent(student);
+    setIsDiscountOpen(true);
+    setDiscountForm({ discount_id: '', fee_structure_id: '', effective_from: new Date().toISOString().slice(0, 10), effective_until: '', notes: '' });
+    try {
+      const [sDiscounts, dCatalog] = await Promise.all([
+        api.getStudentDiscounts(student.id),
+        api.getDiscounts(),
+      ]);
+      setStudentDiscounts(sDiscounts);
+      setAllDiscounts(dCatalog);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAssignDiscount = async () => {
+    if (!discountStudent || !discountForm.discount_id) return;
+    try {
+      await api.addStudentDiscount({
+        student_id: discountStudent.id,
+        discount_id: discountForm.discount_id,
+        fee_structure_id: discountForm.fee_structure_id || null,
+        effective_from: discountForm.effective_from,
+        effective_until: discountForm.effective_until || null,
+        notes: discountForm.notes || null,
+      });
+      // Recalculate all unpaid dues with the new discount
+      await api.recalculateStudentDues(discountStudent.id);
+      const updated = await api.getStudentDiscounts(discountStudent.id);
+      setStudentDiscounts(updated);
+      setDiscountForm({ discount_id: '', fee_structure_id: '', effective_from: discountForm.effective_from, effective_until: '', notes: '' });
+    } catch (err) {
+      alert('Failed to assign discount. It may already be assigned.');
+    }
+  };
+
+  const handleRemoveDiscount = async (id: string) => {
+    if (!discountStudent) return;
+    try {
+      await api.removeStudentDiscount(id);
+      // Recalculate all unpaid dues without the removed discount
+      await api.recalculateStudentDues(discountStudent.id);
+      const updated = await api.getStudentDiscounts(discountStudent.id);
+      setStudentDiscounts(updated);
+    } catch (err) {
+      alert('Failed to remove discount');
+    }
+  };
+
   if (error) return <ErrorSkeleton error={error} />;
 
   return (
@@ -194,6 +251,9 @@ export function Students() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-amber-600" title="Manage Discounts" onClick={() => openDiscountDialog(student)}>
+                      <Tag className="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-blue-600" onClick={() => handleEditClick(student)}>
                       <Edit className="h-4 w-4" />
                     </Button>
@@ -359,6 +419,99 @@ export function Students() {
               <Button type="submit">Update Student</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Discount Management Dialog */}
+      <Dialog open={isDiscountOpen} onOpenChange={setIsDiscountOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Discounts — {discountStudent?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            {/* Active Discounts */}
+            <div>
+              <h4 className="text-sm font-semibold text-slate-700 mb-2">Active Discounts</h4>
+              {studentDiscounts.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 rounded-md p-3">No discounts assigned to this student.</p>
+              ) : (
+                <div className="space-y-2">
+                  {studentDiscounts.map(sd => (
+                    <div key={sd.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white p-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">
+                          {sd.discount_name}
+                          {sd.is_exclusive && <span className="ml-2 text-xs bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Exclusive</span>}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {sd.discount_type === 'percentage' ? `${sd.discount_value}%` : `₹${sd.discount_value}`} off · Applies to: {sd.fee_name}
+                          {sd.effective_until && ` · Until ${sd.effective_until}`}
+                        </p>
+                        {sd.notes && <p className="text-xs text-slate-400 mt-0.5">{sd.notes}</p>}
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-red-500" onClick={() => handleRemoveDiscount(sd.id)}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Assign New Discount */}
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-semibold text-slate-700 mb-3">Assign New Discount</h4>
+              <div className="grid gap-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Discount</Label>
+                    <select
+                      className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm"
+                      value={discountForm.discount_id}
+                      onChange={e => setDiscountForm({...discountForm, discount_id: e.target.value})}
+                    >
+                      <option value="">Select discount…</option>
+                      {allDiscounts.filter(d => d.is_active).map(d => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} ({d.discount_type === 'percentage' ? `${d.value}%` : `₹${d.value}`})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Applies To</Label>
+                    <select
+                      className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm"
+                      value={discountForm.fee_structure_id}
+                      onChange={e => setDiscountForm({...discountForm, fee_structure_id: e.target.value})}
+                    >
+                      <option value="">All Fees</option>
+                      {feeStructures.map(fs => (
+                        <option key={fs.id} value={fs.id}>{fs.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label className="text-xs">From</Label>
+                    <Input type="date" className="h-9" value={discountForm.effective_from} onChange={e => setDiscountForm({...discountForm, effective_from: e.target.value})} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Until (optional)</Label>
+                    <Input type="date" className="h-9" value={discountForm.effective_until} onChange={e => setDiscountForm({...discountForm, effective_until: e.target.value})} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Notes</Label>
+                    <Input className="h-9" placeholder="e.g. Principal approved" value={discountForm.notes} onChange={e => setDiscountForm({...discountForm, notes: e.target.value})} />
+                  </div>
+                </div>
+                <Button onClick={handleAssignDiscount} disabled={!discountForm.discount_id} className="w-full">
+                  <Plus className="h-4 w-4 mr-2" /> Assign Discount
+                </Button>
+              </div>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

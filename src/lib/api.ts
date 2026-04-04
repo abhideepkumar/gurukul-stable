@@ -214,6 +214,8 @@ async function getStudentDues(studentId: string) {
     .from('dues')
     .select(`
       id, amount, paid_amount, due_date, status,
+      original_amount, discount_amount, discount_details,
+      due_type, parent_due_id, is_waived, waived_reason,
       student_fee_assignments!inner(
         fee_structures!inner(name)
       )
@@ -225,12 +227,19 @@ async function getStudentDues(studentId: string) {
 
   // Flatten fee_name to match old API shape
   return (data ?? []).map((d: any) => ({
-    id:           d.id,
-    amount:       d.amount,
-    paid_amount:  d.paid_amount,
-    due_date:     d.due_date,
-    status:       d.status,
-    fee_name:     d.student_fee_assignments?.fee_structures?.name,
+    id:              d.id,
+    amount:          d.amount,
+    paid_amount:     d.paid_amount,
+    due_date:        d.due_date,
+    status:          d.status,
+    fee_name:        d.student_fee_assignments?.fee_structures?.name,
+    original_amount: d.original_amount,
+    discount_amount: d.discount_amount ?? 0,
+    discount_details: d.discount_details ?? [],
+    due_type:        d.due_type ?? 'standard',
+    parent_due_id:   d.parent_due_id,
+    is_waived:       d.is_waived ?? false,
+    waived_reason:   d.waived_reason,
   }));
 }
 
@@ -420,6 +429,199 @@ async function getTransactions(startDate?: string, endDate?: string, page?: numb
   return paginated ? { data: mapped, total: count ?? 0 } : mapped;
 }
 
+// ─── Discounts ────────────────────────────────────────────────
+async function getDiscounts() {
+  const { data, error } = await supabase
+    .from('discounts')
+    .select('*')
+    .order('priority', { ascending: true });
+  return throwOnError(data, error);
+}
+
+async function addDiscount(payload: {
+  name: string;
+  discount_type: 'percentage' | 'fixed';
+  value: number;
+  max_discount_amount?: number | null;
+  is_exclusive?: boolean;
+  priority?: number;
+}) {
+  const { data, error } = await supabase
+    .from('discounts')
+    .insert({
+      name: payload.name,
+      discount_type: payload.discount_type,
+      value: payload.value,
+      max_discount_amount: payload.max_discount_amount ?? null,
+      is_exclusive: payload.is_exclusive ?? false,
+      priority: payload.priority ?? 0,
+    })
+    .select()
+    .single();
+  return throwOnError(data, error);
+}
+
+async function updateDiscount(id: string, payload: {
+  name: string;
+  discount_type: 'percentage' | 'fixed';
+  value: number;
+  max_discount_amount?: number | null;
+  is_exclusive?: boolean;
+  priority?: number;
+  is_active?: boolean;
+}) {
+  const { error } = await supabase
+    .from('discounts')
+    .update({
+      name: payload.name,
+      discount_type: payload.discount_type,
+      value: payload.value,
+      max_discount_amount: payload.max_discount_amount ?? null,
+      is_exclusive: payload.is_exclusive ?? false,
+      priority: payload.priority ?? 0,
+      is_active: payload.is_active ?? true,
+    })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+async function deleteDiscount(id: string) {
+  const { error } = await supabase.from('discounts').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+// ─── Student Discounts ────────────────────────────────────────
+async function getStudentDiscounts(studentId: string) {
+  const { data, error } = await supabase
+    .from('student_discounts')
+    .select('*, discounts(*), fee_structures(id, name)')
+    .eq('student_id', studentId)
+    .eq('is_active', true);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    student_id: row.student_id,
+    discount_id: row.discount_id,
+    fee_structure_id: row.fee_structure_id,
+    effective_from: row.effective_from,
+    effective_until: row.effective_until,
+    approved_by: row.approved_by,
+    notes: row.notes,
+    discount_name: row.discounts?.name,
+    discount_type: row.discounts?.discount_type,
+    discount_value: row.discounts?.value,
+    is_exclusive: row.discounts?.is_exclusive,
+    fee_name: row.fee_structures?.name ?? 'All Fees',
+  }));
+}
+
+async function addStudentDiscount(payload: {
+  student_id: string;
+  discount_id: string;
+  fee_structure_id?: string | null;
+  effective_from: string;
+  effective_until?: string | null;
+  approved_by?: string | null;
+  notes?: string | null;
+}) {
+  const { data, error } = await supabase
+    .from('student_discounts')
+    .insert({
+      student_id: payload.student_id,
+      discount_id: payload.discount_id,
+      fee_structure_id: payload.fee_structure_id ?? null,
+      effective_from: payload.effective_from,
+      effective_until: payload.effective_until ?? null,
+      approved_by: payload.approved_by ?? null,
+      notes: payload.notes ?? null,
+    })
+    .select()
+    .single();
+  return throwOnError(data, error);
+}
+
+async function removeStudentDiscount(id: string) {
+  const { error } = await supabase
+    .from('student_discounts')
+    .update({ is_active: false })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+async function recalculateStudentDues(studentId: string) {
+  const { data, error } = await supabase.rpc('recalculate_student_dues', {
+    p_student_id: studentId,
+  });
+  if (error) throw new Error(error.message);
+  return data as number; // returns count of updated dues
+}
+
+// ─── Late Fee Rules ───────────────────────────────────────────
+async function getLateFeeRules() {
+  const { data, error } = await supabase
+    .from('late_fee_rules')
+    .select('*, fee_structures(name), classes(name)')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({
+    ...r,
+    fee_name: r.fee_structures?.name ?? 'All Fees',
+    class_name: r.classes?.name ?? 'All Classes',
+  }));
+}
+
+async function addLateFeeRule(payload: {
+  name: string;
+  fee_structure_id?: string | null;
+  class_id?: string | null;
+  grace_period_days: number;
+  penalty_type: 'fixed_once' | 'fixed_daily' | 'percentage_monthly';
+  penalty_value: number;
+  max_penalty?: number | null;
+}) {
+  const { data, error } = await supabase
+    .from('late_fee_rules')
+    .insert({
+      name: payload.name,
+      fee_structure_id: payload.fee_structure_id ?? null,
+      class_id: payload.class_id ?? null,
+      grace_period_days: payload.grace_period_days,
+      penalty_type: payload.penalty_type,
+      penalty_value: payload.penalty_value,
+      max_penalty: payload.max_penalty ?? null,
+    })
+    .select()
+    .single();
+  return throwOnError(data, error);
+}
+
+async function deleteLateFeeRule(id: string) {
+  const { error } = await supabase.from('late_fee_rules').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+async function evaluateLateFees(studentId: string) {
+  const { error } = await supabase.rpc('evaluate_student_late_fees', {
+    p_student_id: studentId,
+  });
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+async function waiveDue(dueId: string, waivedBy?: string, reason?: string) {
+  const { error } = await supabase.rpc('waive_due', {
+    p_due_id: dueId,
+    p_waived_by: waivedBy ?? null,
+    p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
 // ─── Exported API object ──────────────────────────────────────
 export const api = {
   // Classes
@@ -450,4 +652,21 @@ export const api = {
   getDashboard,
   getDefaulters,
   getTransactions,
+
+  // Discounts
+  getDiscounts,
+  addDiscount,
+  updateDiscount,
+  deleteDiscount,
+  getStudentDiscounts,
+  addStudentDiscount,
+  removeStudentDiscount,
+  recalculateStudentDues,
+
+  // Late Fees
+  getLateFeeRules,
+  addLateFeeRule,
+  deleteLateFeeRule,
+  evaluateLateFees,
+  waiveDue,
 };

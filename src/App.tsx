@@ -14,6 +14,8 @@ import { FeeStructures } from './pages/FeeStructures';
 import { Payments } from './pages/Payments';
 import { Reports } from './pages/Reports';
 import Classes from './pages/Classes';
+import { Discounts } from './pages/Discounts';
+import { LateFeeRules } from './pages/LateFeeRules';
 import { Loader2 } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -54,6 +56,8 @@ export default function App() {
               <Route path="classes" element={<Classes />} />
               <Route path="students" element={<Students />} />
               <Route path="fees" element={<FeeStructures />} />
+              <Route path="discounts" element={<Discounts />} />
+              <Route path="late-fees" element={<LateFeeRules />} />
               <Route path="payments" element={<Payments />} />
               <Route path="reports" element={<Reports />} />
             </Route>

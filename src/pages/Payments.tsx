@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Receipt, Printer, Loader2 } from 'lucide-react';
+import { Search, Receipt, Printer, Loader2, AlertTriangle, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { useDebounce } from '../hooks/use-debounce';
@@ -44,12 +44,29 @@ export function Payments() {
     api.getStudentDues(studentId).then(setDues).catch(setError);
   };
 
-  const handleSelectStudent = (student: any) => {
+  const handleSelectStudent = async (student: any) => {
     setSelectedStudent(student);
-    loadDues(student.id);
     setSearch('');
     setStudents([]);
     setAllocations({});
+    // Evaluate late fees on-demand, then load dues
+    try {
+      await api.evaluateLateFees(student.id);
+    } catch (err) {
+      // Late fee evaluation may fail if no rules exist, that's OK
+      console.warn('Late fee evaluation:', err);
+    }
+    loadDues(student.id);
+  };
+
+  const handleWaiveDue = async (dueId: string) => {
+    if (!confirm('Waive this late fee? It will be marked as paid/waived.')) return;
+    try {
+      await api.waiveDue(dueId, 'admin', 'Manual waiver');
+      if (selectedStudent) loadDues(selectedStudent.id);
+    } catch (err) {
+      alert('Failed to waive due');
+    }
   };
 
   const handlePayment = async (e: React.FormEvent) => {
@@ -65,6 +82,21 @@ export function Payments() {
     }
 
     const totalAllocated = allocationArray.reduce((sum, alloc) => sum + alloc.amount_allocated, 0);
+
+    const buildEnrichedDues = (clearedDues: any[]) => {
+      return clearedDues.map(cd => {
+        const originalDue = dues.find(d => d.id === cd.due_id);
+        return {
+          ...cd,
+          due_type: originalDue?.due_type || 'standard',
+          original_amount: originalDue?.original_amount || 0,
+          discount_amount: originalDue?.discount_amount || 0,
+          discount_details: originalDue?.discount_details || [],
+          previous_paid_amount: originalDue?.paid_amount || 0,
+          total_due_amount: originalDue?.amount || 0
+        };
+      });
+    };
 
     try {
       if (paymentData.payment_method === 'razorpay') {
@@ -106,7 +138,7 @@ export function Payments() {
                 reference_id: response.razorpay_payment_id,
                 comment: `Razorpay Online Payment`,
                 date: format(new Date(), 'yyyy-MM-dd'),
-                cleared_dues: verifyRes.cleared_dues,
+                cleared_dues: buildEnrichedDues(verifyRes.cleared_dues || []),
               });
               setIsReceiptOpen(true);
               setAllocations({});
@@ -163,7 +195,7 @@ export function Payments() {
         reference_id: paymentData.reference_id,
         comment: paymentData.comment,
         date: paymentData.date,
-        cleared_dues: res.cleared_dues
+        cleared_dues: buildEnrichedDues(res.cleared_dues || [])
       });
       setIsReceiptOpen(true);
 
@@ -286,12 +318,13 @@ export function Payments() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dues.filter(d => d.status !== 'paid').map((due) => {
+                    {dues.filter(d => d.status !== 'paid' && !d.is_waived).map((due) => {
                       const balance = due.amount - due.paid_amount;
                       const isSelected = allocations[due.id] !== undefined;
                       const category = categorizeDue(due.due_date);
+                      const isLateFee = due.due_type === 'late_fee';
                       return (
-                        <TableRow key={due.id} className={isSelected ? "bg-blue-50/50" : ""}>
+                        <TableRow key={due.id} className={`${isSelected ? 'bg-blue-50/50' : ''} ${isLateFee ? 'bg-amber-50/30' : ''}`}>
                           <TableCell>
                             <input 
                               type="checkbox" 
@@ -301,13 +334,24 @@ export function Payments() {
                             />
                           </TableCell>
                           <TableCell className="font-medium">
-                            {due.fee_name}
-                            <div className={`mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              category === 'Overdue' ? 'bg-red-100 text-red-800' :
-                              category === 'Current Month' ? 'bg-amber-100 text-amber-800' :
-                              'bg-slate-100 text-slate-800'
-                            }`}>
-                              {category}
+                            <div className="flex items-center gap-2">
+                              {isLateFee && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />}
+                              <div>
+                                {isLateFee ? 'Late Fee' : due.fee_name}
+                                {isLateFee && <span className="text-xs text-slate-400 ml-1">({due.fee_name})</span>}
+                                <div className={`mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  category === 'Overdue' ? 'bg-red-100 text-red-800' :
+                                  category === 'Current Month' ? 'bg-amber-100 text-amber-800' :
+                                  'bg-slate-100 text-slate-800'
+                                }`}>
+                                  {category}
+                                </div>
+                                {due.discount_amount > 0 && (
+                                  <span className="ml-1.5 text-[10px] text-emerald-600 font-medium">
+                                    (₹{due.discount_amount} off)
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </TableCell>
                           <TableCell className="text-sm">{format(new Date(due.due_date), 'MMM yyyy')}</TableCell>
@@ -315,19 +359,32 @@ export function Payments() {
                             ₹{balance.toLocaleString()}
                           </TableCell>
                           <TableCell className="text-right">
-                            {isSelected ? (
-                              <Input 
-                                type="number" 
-                                min="0" 
-                                max={balance} 
-                                step="0.01"
-                                className="h-8 w-full text-right"
-                                value={allocations[due.id] || ''}
-                                onChange={(e) => handleAllocationChange(due.id, e.target.value, balance)}
-                              />
-                            ) : (
-                              <span className="text-slate-300">-</span>
-                            )}
+                            <div className="flex items-center justify-end gap-1">
+                              {isLateFee && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-slate-400 hover:text-red-500"
+                                  title="Waive this late fee"
+                                  onClick={() => handleWaiveDue(due.id)}
+                                >
+                                  <XCircle className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {isSelected ? (
+                                <Input 
+                                  type="number" 
+                                  min="0" 
+                                  max={balance} 
+                                  step="0.01"
+                                  className="h-8 w-24 text-right"
+                                  value={allocations[due.id] || ''}
+                                  onChange={(e) => handleAllocationChange(due.id, e.target.value, balance)}
+                                />
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -478,15 +535,47 @@ export function Payments() {
 
               {receiptData.cleared_dues && receiptData.cleared_dues.length > 0 && (
                 <div>
-                  <h4 className="font-medium text-sm mb-2 text-slate-500">Cleared Dues</h4>
-                  <ul className="text-sm space-y-1">
-                    {receiptData.cleared_dues.map((due: any, idx: number) => (
-                      <li key={idx} className="flex justify-between">
-                        <span>{due.fee_name} ({format(new Date(due.due_date), 'MMM yyyy')})</span>
-                        <span>₹{due.amount_allocated.toLocaleString()}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <h4 className="font-medium text-sm mb-2 text-slate-500 border-b pb-1">Payment Breakdown</h4>
+                  <div className="text-sm space-y-3 mt-3">
+                    {receiptData.cleared_dues.map((due: any, idx: number) => {
+                      const balanceBeforeThisPayment = due.total_due_amount - due.previous_paid_amount;
+                      const isPartial = due.amount_allocated < balanceBeforeThisPayment;
+                      
+                      return (
+                        <div key={idx} className="flex flex-col space-y-1 pb-2 border-b border-slate-100 last:border-0">
+                          <div className="flex justify-between font-medium text-slate-900">
+                            <span>
+                              {due.due_type === 'late_fee' ? 'Late Fee: ' : ''}{due.fee_name} 
+                              <span className="text-slate-500 font-normal text-xs ml-1">({format(new Date(due.due_date), 'MMM yyyy')})</span>
+                            </span>
+                            <span>₹{due.amount_allocated.toLocaleString()}</span>
+                          </div>
+                          
+                          <div className="flex justify-between text-xs text-slate-500">
+                             <div>
+                               Base: ₹{due.original_amount.toLocaleString()}
+                               {due.discount_amount > 0 && ` | Discount: -₹${due.discount_amount.toLocaleString()}`}
+                               {due.previous_paid_amount > 0 && ` | Prev. Paid: ₹${due.previous_paid_amount.toLocaleString()}`}
+                             </div>
+                             {isPartial && (
+                               <span className="text-amber-600 font-medium bg-amber-50 px-1.5 py-0.5 rounded">Partial Payment</span>
+                             )}
+                          </div>
+                          
+                          {due.discount_details && due.discount_details.length > 0 && (
+                             <div className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-1.5 rounded mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                               <span className="font-medium">Applied Discounts:</span>
+                               {due.discount_details.map((dd: any, i: number) => (
+                                  <span key={i}>
+                                    • {dd.name} (-₹{dd.calculated.toLocaleString()})
+                                  </span>
+                               ))}
+                             </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
             </div>
