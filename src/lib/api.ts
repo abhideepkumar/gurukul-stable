@@ -243,6 +243,25 @@ async function getStudentDues(studentId: string) {
   }));
 }
 
+// ─── Custom Dues ────────────────────────────────────────────────
+async function addCustomDue(payload: {
+  student_id: string;
+  amount: number;
+  title: string;
+  due_date: string;
+  description?: string;
+}) {
+  const { data, error } = await supabase.rpc('add_custom_due', {
+    p_student_id: payload.student_id,
+    p_amount: payload.amount,
+    p_title: payload.title,
+    p_due_date: payload.due_date,
+    p_description: payload.description || null,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 // ─── Payments ─────────────────────────────────────────────────
 async function processPayment(payload: {
   student_id: string;
@@ -359,6 +378,33 @@ async function getDashboard() {
     current_month_dues,
     total_overdue,
   };
+}
+
+async function getStudentTransactions(studentId: string) {
+  const { data, error } = await supabase
+    .from('transactions')
+    .select(`
+      id, amount, payment_method, reference_id, comment, date,
+      transaction_allocations(
+        amount_applied,
+        fee_due_id,
+        dues(
+          student_fee_assignments(fee_structures(name))
+        )
+      )
+    `)
+    .eq('student_id', studentId)
+    .order('date', { ascending: false });
+
+  if (error) throw new Error(error.message);
+  
+  return (data ?? []).map((t: any) => ({
+    ...t,
+    allocations_details: t.transaction_allocations?.map((alloc: any) => ({
+      amount: alloc.amount_applied,
+      fee_name: alloc.dues?.student_fee_assignments?.fee_structures?.name || 'Unknown'
+    })) || []
+  }));
 }
 
 // ─── Reports ──────────────────────────────────────────────────
@@ -644,6 +690,8 @@ export const api = {
   getStudentDues,
 
   // Payments
+  addCustomDue,
+  getStudentTransactions,
   processPayment,
   createRazorpayOrder,
   verifyRazorpayPayment,

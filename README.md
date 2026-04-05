@@ -14,9 +14,17 @@ Built with a modern serverless architecture, it replaces manual ledger entries w
 - **📊 Financial Dashboard**: Real-time overview of total students, current month's collections, monthly generated dues, and aggregated overdue amounts.
 - **🏫 Class & Fee Management**: 
   - Manage classes and configure versatile fee structures (e.g., Tuition, Admission, Transport).
-  - Define custom frequencies: **Monthly, Quarterly, or Yearly**.
+  - Define custom frequencies: **Monthly, Quarterly, Yearly, or One Time**.
   - Map default fee structures to specific classes for rapid onboarding.
 - **👨‍🎓 Student Profiles**: Register students, track parent details, and automatically assign annual dues based on class-specific fee configurations.
+- **🏷️ Discount System**:
+  - Define flexible discount rules (Fixed, Percentage, Max Caps).
+  - Mark discounts as Exclusive or assign stackable priorities.
+  - Apply discounts to specific fees with effective date tracking.
+- **⏰ Late Fees & Waivers**:
+  - Automatically evaluate custom late fee penalties based on Grace Periods.
+  - Supports One-Time Fines, Daily Accruals, or Percentage-of-Outstanding penalties.
+  - Empower admins to gracefully completely or partially waive dues.
 - **💳 Payment Processing**: 
   - **Razorpay Integration**: Native support for online payments with automated verification and receipt generation.
   - Granular fee allocations: Split a single transaction across multiple unpaid or partially paid dues securely.
@@ -59,7 +67,7 @@ Built with a modern serverless architecture, it replaces manual ledger entries w
    ```
 
 3. **Database Schema:**
-   The database schema is located in `supabase/schema.sql`. You can apply this to your Supabase project via the SQL Editor or CLI.
+   The complete consolidated database schema is located in `supabase/schema.sql`. You can apply this single file to your Supabase project via the SQL Editor or CLI to set up all tables, Row-Level Security (RLS) policies, and Stored Procedures (RPCs) at once.
 
 4. **Edge Functions:**
    Deploy the Razorpay Edge Functions:
@@ -75,4 +83,6 @@ Built with a modern serverless architecture, it replaces manual ledger entries w
    > The app will be available at `http://localhost:5173` (default Vite port).
 
 ## 📂 Architecture Note
-This project follows a modern serverless architecture. The React frontend interacts directly with the Supabase REST API for data and invokes Supabase Edge Functions for sensitive operations like payment processing. There is no traditional Express server; all backend logic is either handled by Supabase's RLS and storage or via decoupled serverless functions.
+This project follows a modern serverless architecture. The React frontend interacts directly with the Supabase REST API for data and invokes Supabase Edge Functions for sensitive operations like payment processing. There is no traditional Express server; all backend logic is either handled by Supabase's RLS and storage or via decoupled serverless functions. 
+
+> **Security Requirement**: Complex logic (such as due/late fee generation and transaction processing) uses `SECURITY DEFINER` Remote Procedure Calls (RPCs) in PostgreSQL. Because these functions bypass RLS policies to perform multi-table atomic updates, **each RPC MUST be strictly granted to the `authenticated` role and explicitly revoked from `PUBLIC` and `anon`**. The `schema.sql` enforces this exact access control mechanism to prevent unauthorized access via the Supabase REST API.

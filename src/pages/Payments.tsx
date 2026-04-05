@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Receipt, Printer, Loader2, AlertTriangle, XCircle } from 'lucide-react';
+import { Search, Receipt, Printer, Loader2, AlertTriangle, XCircle, Plus, History } from 'lucide-react';
 import { format } from 'date-fns';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { useDebounce } from '../hooks/use-debounce';
@@ -30,6 +30,12 @@ export function Payments() {
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [error, setError] = useState<Error | null>(null);
 
+  const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
+  const [history, setHistory] = useState<any[]>([]);
+  const [isAddBillOpen, setIsAddBillOpen] = useState(false);
+  const [billData, setBillData] = useState({ amount: '', title: '', due_date: format(new Date(), 'yyyy-MM-dd'), description: '' });
+  const [isAddingBill, setIsAddingBill] = useState(false);
+
   const debouncedSearch = useDebounce(search, 300);
 
   useEffect(() => {
@@ -42,6 +48,10 @@ export function Payments() {
 
   const loadDues = (studentId: string) => {
     api.getStudentDues(studentId).then(setDues).catch(setError);
+  };
+
+  const loadHistory = (studentId: string) => {
+    api.getStudentTransactions(studentId).then(setHistory).catch(console.error);
   };
 
   const handleSelectStudent = async (student: any) => {
@@ -57,6 +67,7 @@ export function Payments() {
       console.warn('Late fee evaluation:', err);
     }
     loadDues(student.id);
+    loadHistory(student.id);
   };
 
   const handleWaiveDue = async (dueId: string) => {
@@ -66,6 +77,28 @@ export function Payments() {
       if (selectedStudent) loadDues(selectedStudent.id);
     } catch (err) {
       alert('Failed to waive due');
+    }
+  };
+
+  const handleAddBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedStudent) return;
+    setIsAddingBill(true);
+    try {
+      await api.addCustomDue({
+        student_id: selectedStudent.id,
+        amount: parseFloat(billData.amount),
+        title: billData.title,
+        due_date: billData.due_date,
+        description: billData.description
+      });
+      setIsAddBillOpen(false);
+      setBillData({ amount: '', title: '', due_date: format(new Date(), 'yyyy-MM-dd'), description: '' });
+      loadDues(selectedStudent.id);
+    } catch (err: any) {
+      alert(err.message || 'Failed to add custom bill');
+    } finally {
+      setIsAddingBill(false);
     }
   };
 
@@ -303,9 +336,30 @@ export function Payments() {
             <Button variant="outline" onClick={() => setSelectedStudent(null)}>Change Student</Button>
           </div>
 
+          <div className="flex border-b border-slate-200">
+            <button 
+              className={`px-4 py-2 font-medium text-sm border-b-2 flex items-center gap-2 ${activeTab === 'pending' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
+              onClick={() => setActiveTab('pending')}
+            >
+              <Receipt className="h-4 w-4" /> Pending Dues
+            </button>
+            <button 
+              className={`px-4 py-2 font-medium text-sm border-b-2 flex items-center gap-2 ${activeTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
+              onClick={() => setActiveTab('history')}
+            >
+              <History className="h-4 w-4" /> Payment History
+            </button>
+          </div>
+
+          {activeTab === 'pending' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
-              <h4 className="text-lg font-medium">1. Select Dues to Pay</h4>
+              <div className="flex justify-between items-center">
+                <h4 className="text-lg font-medium">1. Select Dues to Pay</h4>
+                <Button size="sm" variant="outline" onClick={() => setIsAddBillOpen(true)} className="gap-2">
+                  <Plus className="h-4 w-4" /> Add Custom Bill
+                </Button>
+              </div>
               <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
                 <Table>
                   <TableHeader>
@@ -472,8 +526,87 @@ export function Payments() {
               </div>
             </div>
           </div>
+          )}
+
+          {activeTab === 'history' && (
+            <div className="space-y-4">
+              <h4 className="text-lg font-medium">Payment History</h4>
+              <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Method</TableHead>
+                      <TableHead>Reference</TableHead>
+                      <TableHead>Items Paid</TableHead>
+                      <TableHead className="text-right">Amount (₹)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.map((tx) => (
+                      <TableRow key={tx.id}>
+                        <TableCell className="font-medium">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
+                        <TableCell className="capitalize">{tx.payment_method}</TableCell>
+                        <TableCell className="text-slate-500 text-sm">{tx.reference_id || '-'}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1 max-w-[250px]">
+                            {tx.allocations_details?.map((alloc: any, idx: number) => (
+                              <span key={idx} className="inline-flex items-center rounded-sm bg-slate-100 px-2 py-0.5 text-[11px] text-slate-800">
+                                {alloc.fee_name}: ₹{alloc.amount.toLocaleString()}
+                              </span>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-emerald-600">
+                          ₹{tx.amount.toLocaleString()}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {history.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-24 text-center text-slate-500">
+                          No payment history found for this student.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Add Custom Bill Dialog */}
+      <Dialog open={isAddBillOpen} onOpenChange={setIsAddBillOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <form onSubmit={handleAddBill}>
+            <DialogHeader>
+              <DialogTitle>Add Custom Bill</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="title">Bill Name / Description</Label>
+                <Input id="title" placeholder="e.g. Transport Arrears, Fines..." required value={billData.title} onChange={e => setBillData({...billData, title: e.target.value})} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="amount">Amount (₹)</Label>
+                <Input id="amount" type="number" min="1" step="0.01" required value={billData.amount} onChange={e => setBillData({...billData, amount: e.target.value})} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="due_date">Due Date</Label>
+                <Input id="due_date" type="date" required value={billData.due_date} onChange={e => setBillData({...billData, due_date: e.target.value})} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsAddBillOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={isAddingBill}>
+                {isAddingBill ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Adding...</> : 'Add Bill'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Receipt Modal */}
       <Dialog open={isReceiptOpen} onOpenChange={setIsReceiptOpen}>

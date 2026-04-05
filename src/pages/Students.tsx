@@ -5,9 +5,10 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Plus, Trash2, Edit, Tag, X } from 'lucide-react';
+import { Search, Plus, Trash2, Edit, Tag, X, Upload } from 'lucide-react';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
+import { CsvImportModal } from '../components/CsvImportModal';
 import { useDebounce } from '../hooks/use-debounce';
 
 export function Students() {
@@ -31,6 +32,8 @@ export function Students() {
   const [studentDiscounts, setStudentDiscounts] = useState<any[]>([]);
   const [allDiscounts, setAllDiscounts] = useState<any[]>([]);
   const [discountForm, setDiscountForm] = useState({ discount_id: '', fee_structure_id: '', effective_from: '', effective_until: '', notes: '' });
+
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -190,13 +193,18 @@ export function Students() {
           <h2 className="text-3xl font-bold tracking-tight text-slate-900">Students</h2>
           <p className="text-slate-500">Manage student records and view their dues.</p>
         </div>
-        <Button onClick={() => {
-          setIsAddOpen(true);
-          setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
-          setSelectedFeeStructures([]);
-        }} className="gap-2">
-          <Plus className="h-4 w-4" /> Add Student
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)} className="gap-2">
+            <Upload className="h-4 w-4" /> Import CSV
+          </Button>
+          <Button onClick={() => {
+            setIsAddOpen(true);
+            setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
+            setSelectedFeeStructures([]);
+          }} className="gap-2">
+            <Plus className="h-4 w-4" /> Add Student
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -514,6 +522,12 @@ export function Students() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <CsvImportModal 
+        open={isImportOpen} 
+        onOpenChange={setIsImportOpen} 
+        onSuccess={loadStudents} 
+      />
     </div>
   );
 }
