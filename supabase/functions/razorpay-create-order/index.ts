@@ -3,25 +3,24 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { verify } from "https://deno.land/x/djwt@v2.9.1/mod.ts";
 
 serve(async (req) => {
+  const origin = req.headers.get("origin") || "*";
+  
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": origin, // Dynamic origin instead of wildcard
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // ── AUTH CHECK ─────────────────────────────────────────────
-    // Verify the caller has a valid Supabase session.
-    // The frontend's supabase-js client automatically attaches
-    // the user's JWT in the Authorization header.
+    // ── AUTH CHECK (Local verification to avoid API roundtrip) ──
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -30,20 +29,41 @@ serve(async (req) => {
       );
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-
-    // Create a client scoped to the user's JWT to verify identity
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const token = authHeader.replace("Bearer ", "");
+    const jwtSecret = Deno.env.get("SUPABASE_JWT_SECRET"); // Automatically provided by Supabase
+    
+    if (jwtSecret) {
+      try {
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(jwtSecret),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["verify"]
+        );
+        // Verify JWT locally
+        await verify(token, key);
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    } else {
+      // Fallback to API check if secret isn't available in this environment
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+      const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+      if (authError || !user) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
     // ── END AUTH CHECK ─────────────────────────────────────────
 
@@ -69,6 +89,7 @@ serve(async (req) => {
     }
 
     // Use service role for DB operations (bypasses RLS)
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 

@@ -84,7 +84,7 @@ export function Reports() {
           sanitizeCSVCell(d.name),
           sanitizeCSVCell(d.class_name),
           sanitizeCSVCell(d.phone),
-          sanitizeCSVCell(d.overdue_amount),
+          sanitizeCSVCell(d.pending_amount),
         ]);
       });
     } else {

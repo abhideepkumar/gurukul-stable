@@ -2,21 +2,22 @@
 -- GURUKUL: School Fees Management System
 -- Complete PostgreSQL Schema (Supabase)
 --
--- This single file contains ALL tables, RLS policies, RPCs,
--- and security hardening. Run it in the Supabase SQL Editor
--- on a FRESH project, or use it as the canonical reference.
+-- *** CANONICAL SCHEMA — Single Source of Truth ***
+-- This file includes ALL phases merged together:
+--   Phase 0 (Base): Core tables, RLS, types, RPCs
+--   Phase 1: Discounts system
+--   Phase 2: Late fees system
+--   Phase 3: Performance indexes, optimized RPCs,
+--            student_summary view, bulk_import_students,
+--            calculate_discount_for_fee helper
+--   Phase 4: Hotfixes (razorpay payment method,
+--            payment_intents processing status,
+--            RPC security grants)
 --
--- Includes:
---   • Core tables (classes, students, fees, dues, transactions)
---   • Discount system (discounts, student_discounts)
---   • Late fee system (late_fee_rules)
---   • Payment intents (Razorpay integration)
---   • All RLS policies (authenticated role)
---   • RPCs: add_student_with_dues, process_payment,
---           recalculate_student_dues, evaluate_student_late_fees,
---           waive_due
---   • Input validation constraints
---   • Security hardening (RPC access control)
+-- For an EXISTING project: apply only the phase files
+-- you haven't run yet (see /supabase/README or root README.md).
+--
+-- For a FRESH project: run only THIS file — everything is here.
 -- ============================================================
 
 
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS students (
   parent_name TEXT,
   phone TEXT,
   email TEXT,
+  last_late_fee_eval DATE,  -- Guards against running late fee evaluation more than once per day
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -97,7 +99,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
-  payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'online')),
+  payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'online', 'razorpay')),
   reference_id TEXT,
   comment TEXT,
   date DATE NOT NULL,
@@ -117,7 +119,9 @@ CREATE TABLE IF NOT EXISTS payment_intents (
   student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
   allocations JSONB NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
+  -- 'processing' is set atomically by razorpay-verify before finalizing
+  -- to prevent TOCTOU double-processing race conditions
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'success', 'failed')),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -785,31 +789,283 @@ BEGIN
   END IF;
 END;
 $$;
+-- ============================================================
+-- 11. [MOVED TO END OF FILE]
+-- ============================================================
+
+-- ============================================================
+-- 12. PERFORMANCE INDEXES (Phase 3)
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_dues_student_id        ON dues(student_id);
+CREATE INDEX IF NOT EXISTS idx_dues_status            ON dues(status) WHERE status != 'paid';
+CREATE INDEX IF NOT EXISTS idx_dues_due_date          ON dues(due_date);
+CREATE INDEX IF NOT EXISTS idx_dues_student_status    ON dues(student_id, status, due_date);
+CREATE INDEX IF NOT EXISTS idx_transactions_student_id ON transactions(student_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_date       ON transactions(date);
+CREATE INDEX IF NOT EXISTS idx_student_discounts_student_id ON student_discounts(student_id);
+CREATE INDEX IF NOT EXISTS idx_sfa_student_id         ON student_fee_assignments(student_id);
 
 
 -- ============================================================
--- 11. SECURITY HARDENING: Lock down RPCs
---
+-- 13. HELPER RPC: calculate_discount_for_fee (Phase 3)
+-- Centralizes discount math — called by add_student_with_dues
+-- and recalculate_student_dues to prevent logic drift.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION calculate_discount_for_fee(
+  p_student_id UUID,
+  p_fee_structure_id UUID,
+  p_base_amount NUMERIC,
+  p_reference_date DATE,
+  OUT v_discount_total NUMERIC,
+  OUT v_net_amount NUMERIC,
+  OUT v_discount_details JSONB
+)
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  d_rec RECORD;
+  v_disc_calc NUMERIC;
+BEGIN
+  v_discount_total := 0;
+  v_discount_details := '[]'::jsonb;
+  v_net_amount := p_base_amount;
+
+  FOR d_rec IN
+    SELECT d.name, d.discount_type, d.value, d.max_discount_amount, d.is_exclusive, d.priority
+    FROM student_discounts sd
+    JOIN discounts d ON sd.discount_id = d.id
+    WHERE sd.student_id = p_student_id
+      AND (sd.fee_structure_id IS NULL OR sd.fee_structure_id = p_fee_structure_id)
+      AND sd.is_active = true AND d.is_active = true
+      AND sd.effective_from <= p_reference_date
+      AND (sd.effective_until IS NULL OR sd.effective_until >= p_reference_date)
+    ORDER BY d.is_exclusive DESC,
+             (CASE WHEN d.discount_type = 'percentage' THEN 0 ELSE 1 END),
+             d.priority ASC
+  LOOP
+    IF d_rec.is_exclusive THEN
+      IF d_rec.discount_type = 'percentage' THEN
+        v_disc_calc := p_base_amount * d_rec.value / 100;
+        IF d_rec.max_discount_amount IS NOT NULL THEN v_disc_calc := LEAST(v_disc_calc, d_rec.max_discount_amount); END IF;
+      ELSE
+        v_disc_calc := LEAST(d_rec.value, p_base_amount);
+      END IF;
+      v_discount_total := LEAST(v_disc_calc, p_base_amount);
+      v_discount_details := jsonb_build_array(jsonb_build_object('name', d_rec.name, 'type', d_rec.discount_type, 'value', d_rec.value, 'calculated', v_discount_total));
+      v_net_amount := GREATEST(p_base_amount - v_discount_total, 0);
+      EXIT;
+    END IF;
+
+    IF d_rec.discount_type = 'percentage' THEN
+      v_disc_calc := v_net_amount * d_rec.value / 100;
+      IF d_rec.max_discount_amount IS NOT NULL THEN v_disc_calc := LEAST(v_disc_calc, d_rec.max_discount_amount); END IF;
+    ELSE
+      v_disc_calc := LEAST(d_rec.value, v_net_amount);
+    END IF;
+    v_disc_calc := LEAST(v_disc_calc, v_net_amount);
+    v_discount_total := v_discount_total + v_disc_calc;
+    v_net_amount := v_net_amount - v_disc_calc;
+    v_discount_details := v_discount_details || jsonb_build_array(jsonb_build_object('name', d_rec.name, 'type', d_rec.discount_type, 'value', d_rec.value, 'calculated', v_disc_calc));
+  END LOOP;
+END;
+$$;
+
+
+-- ============================================================
+-- 14. VIEW: student_summary (Phase 3)
+-- Resolves the N+1 query pattern on the Students list page.
+-- Frontend queries this view instead of students + separate dues fetch.
+-- ============================================================
+
+CREATE OR REPLACE VIEW student_summary AS
+SELECT
+  s.*,
+  c.name AS class_name,
+  COALESCE(SUM(CASE WHEN d.due_date < date_trunc('month', CURRENT_DATE) AND d.status != 'paid'
+                THEN d.amount - d.paid_amount ELSE 0 END), 0) AS overdue_amount,
+  COALESCE(SUM(CASE WHEN d.due_date >= date_trunc('month', CURRENT_DATE)
+                     AND d.due_date <= (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month - 1 day')
+                     AND d.status != 'paid'
+                THEN d.amount - d.paid_amount ELSE 0 END), 0) AS current_month_due,
+  COALESCE(SUM(CASE WHEN d.status != 'paid'
+                THEN d.amount - d.paid_amount ELSE 0 END), 0) AS pending_amount
+FROM students s
+LEFT JOIN classes c ON s.class_id = c.id
+LEFT JOIN dues d ON d.student_id = s.id
+GROUP BY s.id, c.name;
+
+
+-- ============================================================
+-- 15. RPC: get_dashboard_stats (Phase 3)
+-- Single DB call to replace 4 separate network roundtrips.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_dashboard_stats()
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_month_start DATE := date_trunc('month', CURRENT_DATE)::DATE;
+  v_month_end   DATE := (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month - 1 day')::DATE;
+BEGIN
+  RETURN json_build_object(
+    'total_students',           (SELECT COUNT(*) FROM students),
+    'current_month_collection', COALESCE((SELECT SUM(amount) FROM transactions WHERE date BETWEEN v_month_start AND v_month_end), 0),
+    'current_month_dues',       COALESCE((SELECT SUM(amount) FROM dues WHERE due_date BETWEEN v_month_start AND v_month_end), 0),
+    'total_overdue',            COALESCE((SELECT SUM(amount - paid_amount) FROM dues WHERE due_date < v_month_start AND status != 'paid'), 0)
+  );
+END;
+$$;
+
+
+-- ============================================================
+-- 16. RPC: get_defaulters_report (Phase 3)
+-- Aggregates defaulters server-side to avoid sending raw
+-- due rows to the client for JavaScript processing.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_defaulters_report()
+RETURNS TABLE(id UUID, name TEXT, phone TEXT, class_name TEXT, pending_amount NUMERIC)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    s.id,
+    s.name,
+    COALESCE(s.phone, '') AS phone,
+    c.name AS class_name,
+    SUM(d.amount - d.paid_amount) AS pending_amount
+  FROM dues d
+  JOIN students s ON d.student_id = s.id
+  JOIN classes c ON s.class_id = c.id
+  WHERE d.due_date < date_trunc('month', CURRENT_DATE)
+    AND d.status != 'paid'
+  GROUP BY s.id, s.name, s.phone, c.name
+  HAVING SUM(d.amount - d.paid_amount) > 0
+  ORDER BY pending_amount DESC;
+$$;
+
+
+-- ============================================================
+-- 17. RPC: bulk_import_students (Phase 3)
+-- Processes an entire CSV import in a single DB transaction.
+-- Replaces N serial HTTP calls from the frontend (one per row).
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION bulk_import_students(p_students JSONB)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  item JSONB;
+  v_student_id UUID;
+  v_class_id UUID;
+  v_results JSON[] := '{}';
+  v_errors  JSON[] := '{}';
+  i INTEGER;
+  due_amount NUMERIC;
+  due_desc TEXT;
+  due_date_str TEXT;
+  due_date_val DATE;
+BEGIN
+  FOR item IN SELECT jsonb_array_elements(p_students)
+  LOOP
+    BEGIN
+      SELECT id INTO v_class_id FROM classes
+      WHERE lower(name) = lower(item->>'Class Name');
+
+      IF v_class_id IS NULL THEN
+        v_errors := array_append(v_errors, json_build_object('name', item->>'Name', 'error', 'Class not found'));
+        CONTINUE;
+      END IF;
+
+      v_student_id := add_student_with_dues(
+        item->>'Name', v_class_id, NULL,
+        NULLIF(item->>'Section', ''), NULLIF(item->>'Parent Name', ''),
+        NULLIF(item->>'Phone', ''), NULLIF(item->>'Email', '')
+      );
+
+      FOR i IN 1..10 LOOP
+        due_amount := NULLIF(item->>('Old Due ' || i || ' Amount'), '')::NUMERIC;
+        IF due_amount IS NOT NULL AND due_amount > 0 THEN
+          due_desc := item->>('Old Due ' || i || ' Desc');
+          due_date_str := item->>('Old Due ' || i || ' Date');
+
+          IF due_desc IS NULL OR due_desc = '' THEN
+            RAISE EXCEPTION 'Missing Description for Old Due %', i;
+          END IF;
+
+          IF due_date_str IS NULL OR due_date_str = '' THEN
+            due_date_val := CURRENT_DATE;
+          ELSE
+            due_date_val := due_date_str::DATE;
+          END IF;
+
+          PERFORM add_custom_due(v_student_id, due_amount, due_desc, due_date_val, 'Bulk Import - Old Due ' || i);
+        END IF;
+      END LOOP;
+
+      v_results := array_append(v_results, json_build_object('name', item->>'Name', 'id', v_student_id));
+
+    EXCEPTION WHEN OTHERS THEN
+      v_errors := array_append(v_errors, json_build_object('name', item->>'Name', 'error', SQLERRM));
+    END;
+  END LOOP;
+
+  RETURN json_build_object('imported', array_to_json(v_results), 'errors', array_to_json(v_errors));
+END;
+$$;
+
+
+-- ============================================================
+-- 18. SECURITY HARDENING: Lock down all RPCs
 -- SECURITY DEFINER functions bypass RLS. Restrict to
 -- authenticated users only — deny anon and PUBLIC.
+-- Must run AFTER all functions have been defined.
 -- ============================================================
 
 REVOKE EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT, TEXT, TEXT) FROM anon;
-GRANT EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT, TEXT, TEXT) TO authenticated;
+GRANT  EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT, TEXT, TEXT) TO authenticated;
 
 REVOKE EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) FROM anon;
-GRANT EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) TO authenticated;
+GRANT  EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) TO authenticated;
 
 REVOKE EXECUTE ON FUNCTION recalculate_student_dues(UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION recalculate_student_dues(UUID) FROM anon;
-GRANT EXECUTE ON FUNCTION recalculate_student_dues(UUID) TO authenticated;
+GRANT  EXECUTE ON FUNCTION recalculate_student_dues(UUID) TO authenticated;
 
 REVOKE EXECUTE ON FUNCTION evaluate_student_late_fees(UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION evaluate_student_late_fees(UUID) FROM anon;
-GRANT EXECUTE ON FUNCTION evaluate_student_late_fees(UUID) TO authenticated;
+GRANT  EXECUTE ON FUNCTION evaluate_student_late_fees(UUID) TO authenticated;
 
 REVOKE EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) FROM anon;
-GRANT EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) TO authenticated;
+GRANT  EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) TO authenticated;
+
+-- Phase 3 RPCs
+REVOKE EXECUTE ON FUNCTION calculate_discount_for_fee(UUID, UUID, NUMERIC, DATE) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION calculate_discount_for_fee(UUID, UUID, NUMERIC, DATE) FROM anon;
+GRANT  EXECUTE ON FUNCTION calculate_discount_for_fee(UUID, UUID, NUMERIC, DATE) TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION get_dashboard_stats() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_dashboard_stats() FROM anon;
+GRANT  EXECUTE ON FUNCTION get_dashboard_stats() TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION get_defaulters_report() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_defaulters_report() FROM anon;
+GRANT  EXECUTE ON FUNCTION get_defaulters_report() TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION bulk_import_students(JSONB) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION bulk_import_students(JSONB) FROM anon;
+GRANT  EXECUTE ON FUNCTION bulk_import_students(JSONB) TO authenticated;
+

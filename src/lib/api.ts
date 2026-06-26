@@ -1,5 +1,4 @@
 import { supabase } from './supabase';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
 
 // ─── Error helper ────────────────────────────────────────────
 function throwOnError<T>(data: T | null, error: { message: string } | null): T {
@@ -100,15 +99,12 @@ async function deleteFeeStructure(id: string) {
 
 // ─── Students ────────────────────────────────────────────────
 async function getStudents(search?: string, classId?: string, page?: number, limit?: number): Promise<any[] | PaginatedResult<any>> {
-  const currentMonthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
-  const currentMonthEnd   = format(endOfMonth(new Date()), 'yyyy-MM-dd');
-
   const paginated = page !== undefined && limit !== undefined;
 
-  // Fetch students with their class name
+  // Use the new student_summary view to avoid N+1 queries
   let query = supabase
-    .from('students')
-    .select('*, classes(name)', paginated ? { count: 'exact' } : {})
+    .from('student_summary')
+    .select('*', paginated ? { count: 'exact' } : {})
     .order('name', { ascending: true });
 
   if (search) query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
@@ -120,50 +116,10 @@ async function getStudents(search?: string, classId?: string, page?: number, lim
     query = query.range(from, to);
   }
 
-  const { data: students, error: studentsError, count } = await query;
-  if (studentsError) throw new Error(studentsError.message);
+  const { data, error, count } = await query;
+  if (error) throw new Error(error.message);
 
-  // Fetch dues separately to compute aggregates
-  const studentIds = (students ?? []).map((s: any) => s.id);
-  if (studentIds.length === 0) return paginated ? { data: [], total: 0 } : [];
-
-  const { data: dues, error: duesError } = await supabase
-    .from('dues')
-    .select('student_id, amount, paid_amount, due_date, status')
-    .in('student_id', studentIds);
-
-  if (duesError) throw new Error(duesError.message);
-
-  // Aggregate per student
-  const enriched = (students ?? []).map((student: any) => {
-    const studentDues = (dues ?? []).filter((d: any) => d.student_id === student.id);
-    let overdue_amount = 0;
-    let current_month_due = 0;
-    let pending_amount = 0;
-
-    for (const d of studentDues) {
-      if (d.status === 'paid') continue;
-      const balance = d.amount - d.paid_amount;
-      if (d.due_date < currentMonthStart) {
-        overdue_amount += balance;
-      } else if (d.due_date >= currentMonthStart && d.due_date <= currentMonthEnd) {
-        current_month_due += balance;
-      }
-      if (d.due_date <= currentMonthEnd) {
-        pending_amount += balance;
-      }
-    }
-
-    return {
-      ...student,
-      class_name: student.classes?.name,
-      overdue_amount,
-      current_month_due,
-      pending_amount,
-    };
-  });
-
-  return paginated ? { data: enriched, total: count ?? 0 } : enriched;
+  return paginated ? { data: data ?? [], total: count ?? 0 } : (data ?? []);
 }
 
 async function addStudent(payload: {
@@ -207,6 +163,14 @@ async function deleteStudent(id: string) {
   const { error } = await supabase.from('students').delete().eq('id', id);
   if (error) throw new Error(error.message);
   return { success: true };
+}
+
+async function bulkImportStudents(students: any[]) {
+  const { data, error } = await supabase.rpc('bulk_import_students', {
+    p_students: students,
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 async function getStudentDues(studentId: string) {
@@ -344,40 +308,9 @@ async function verifyRazorpayPayment(payload: {
 
 // ─── Dashboard ────────────────────────────────────────────────
 async function getDashboard() {
-  const currentMonthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
-  const currentMonthEnd   = format(endOfMonth(new Date()), 'yyyy-MM-dd');
-
-  const [studentsRes, txRes, currentDuesRes, overdueDuesRes] = await Promise.all([
-    supabase.from('students').select('id', { count: 'exact', head: true }),
-    supabase.from('transactions')
-      .select('amount')
-      .gte('date', currentMonthStart)
-      .lte('date', currentMonthEnd),
-    supabase.from('dues')
-      .select('amount')
-      .gte('due_date', currentMonthStart)
-      .lte('due_date', currentMonthEnd),
-    supabase.from('dues')
-      .select('amount, paid_amount')
-      .lt('due_date', currentMonthStart)
-      .neq('status', 'paid'),
-  ]);
-
-  if (studentsRes.error) throw new Error(studentsRes.error.message);
-  if (txRes.error) throw new Error(txRes.error.message);
-  if (currentDuesRes.error) throw new Error(currentDuesRes.error.message);
-  if (overdueDuesRes.error) throw new Error(overdueDuesRes.error.message);
-
-  const current_month_collection = (txRes.data ?? []).reduce((s: number, r: any) => s + r.amount, 0);
-  const current_month_dues       = (currentDuesRes.data ?? []).reduce((s: number, r: any) => s + r.amount, 0);
-  const total_overdue            = (overdueDuesRes.data ?? []).reduce((s: number, r: any) => s + (r.amount - r.paid_amount), 0);
-
-  return {
-    total_students:           studentsRes.count ?? 0,
-    current_month_collection,
-    current_month_dues,
-    total_overdue,
-  };
+  const { data, error } = await supabase.rpc('get_dashboard_stats');
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 async function getStudentTransactions(studentId: string) {
@@ -409,37 +342,9 @@ async function getStudentTransactions(studentId: string) {
 
 // ─── Reports ──────────────────────────────────────────────────
 async function getDefaulters() {
-  const currentMonthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
-
-  const { data, error } = await supabase
-    .from('dues')
-    .select(`
-      student_id, amount, paid_amount,
-      students!inner(id, name, phone, classes!inner(name))
-    `)
-    .lt('due_date', currentMonthStart)
-    .neq('status', 'paid');
-
+  const { data, error } = await supabase.rpc('get_defaulters_report');
   if (error) throw new Error(error.message);
-
-  // Aggregate pending amounts per student
-  const map = new Map<string, any>();
-  for (const row of data ?? []) {
-    const s = (row as any).students;
-    const existing = map.get(s.id) ?? {
-      id: s.id,
-      name: s.name,
-      phone: s.phone,
-      class_name: s.classes?.name,
-      pending_amount: 0,
-    };
-    existing.pending_amount += row.amount - row.paid_amount;
-    map.set(s.id, existing);
-  }
-
-  return Array.from(map.values())
-    .filter(s => s.pending_amount > 0)
-    .sort((a, b) => b.pending_amount - a.pending_amount);
+  return data;
 }
 
 async function getTransactions(startDate?: string, endDate?: string, page?: number, limit?: number): Promise<any[] | PaginatedResult<any>> {
@@ -687,6 +592,7 @@ export const api = {
   addStudent,
   updateStudent,
   deleteStudent,
+  bulkImportStudents,
   getStudentDues,
 
   // Payments

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { api } from '@/src/lib/api';
+import { useAuth } from '@/src/lib/auth';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
@@ -19,6 +20,7 @@ declare global {
 
 export function Payments() {
   const [students, setStudents] = useState<any[]>([]);
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [dues, setDues] = useState<any[]>([]);
@@ -73,7 +75,7 @@ export function Payments() {
   const handleWaiveDue = async (dueId: string) => {
     if (!confirm('Waive this late fee? It will be marked as paid/waived.')) return;
     try {
-      await api.waiveDue(dueId, 'admin', 'Manual waiver');
+      await api.waiveDue(dueId, user?.email ?? 'admin', 'Manual waiver');
       if (selectedStudent) loadDues(selectedStudent.id);
     } catch (err) {
       alert('Failed to waive due');

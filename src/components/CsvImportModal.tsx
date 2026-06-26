@@ -50,6 +50,7 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
   
   const [progress, setProgress] = useState({ current: 0, total: 0, failed: 0 });
   const [isProcessing, setIsProcessing] = useState(false);
+  const [importErrors, setImportErrors] = useState<Array<{name: string, error: string}>>([]);
 
   // 1. Fetch available classes on mount to build a name-to-UUID map
   useEffect(() => {
@@ -68,6 +69,14 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
       setValidationErrors([]);
     }
   }, [open]);
+
+  // Clear import errors when starting fresh
+  const resetState = () => {
+    setStep(1);
+    setParsedData([]);
+    setValidationErrors([]);
+    setImportErrors([]);
+  };
 
   // 2. Download Template
   const handleDownloadTemplate = () => {
@@ -143,64 +152,42 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
     e.target.value = '';
   };
 
-  // 4. Orchestrate Import Sequentially
+  // 4. Orchestrate Import in one Bulk API call
   const handleStartImport = async () => {
     if (validationErrors.length > 0) return;
     
     setStep(3);
     setIsProcessing(true);
     setProgress({ current: 0, total: parsedData.length, failed: 0 });
+    setImportErrors([]);
 
-    let failedCount = 0;
+    try {
+      const response = await api.bulkImportStudents(parsedData);
+      
+      const importedCount = response?.imported?.length || 0;
+      const failedItems: Array<{name: string, error: string}> = response?.errors || [];
+      const failedCount = failedItems.length;
 
-    for (let i = 0; i < parsedData.length; i++) {
-        const row = parsedData[i];
-        const classId = classesMap[row["Class Name"].toLowerCase()];
+      setProgress({
+        current: importedCount + failedCount,
+        total: parsedData.length,
+        failed: failedCount
+      });
 
-        try {
-            // 4a. Create Student & Assign Default Setup (add_student_with_dues)
-            const studentId = await api.addStudent({
-                name: row["Name"],
-                class_id: classId,
-                section: row["Section"] || undefined,
-                parent_name: row["Parent Name"] || undefined,
-                phone: row["Phone"] || undefined,
-                email: row["Email"] || undefined,
-            });
-
-            // 4b. Loop through Old Dues (dynamic checking up to 10 slots)
-            for (let j = 1; j <= 10; j++) {
-                const amountStr = row[`Old Due ${j} Amount`];
-                const descStr   = row[`Old Due ${j} Desc`];
-                let dateStr     = row[`Old Due ${j} Date`];
-                
-                if (amountStr && !isNaN(parseFloat(amountStr)) && parseFloat(amountStr) > 0) {
-                    if (!descStr) throw new Error(`Missing Description for Old Due ${j} on row ${i + 2}`);
-                    if (!dateStr) dateStr = format(new Date(), 'yyyy-MM-dd'); // Default to today if missing
-
-                    await api.addCustomDue({
-                        student_id: studentId,
-                        amount: parseFloat(amountStr),
-                        title: descStr,
-                        due_date: dateStr,
-                        description: `Bulk Import - Old Due ${j}`
-                    });
-                }
-            }
-
-            setProgress(prev => ({ ...prev, current: prev.current + 1 }));
-        } catch (err) {
-            console.error(`Failed to import row ${i + 2}:`, err);
-            failedCount++;
-            setProgress(prev => ({ ...prev, failed: failedCount }));
-        }
+      if (failedCount > 0) {
+        setImportErrors(failedItems);
+      }
+    } catch (err: any) {
+      console.error(`Bulk import failed:`, err);
+      setProgress(prev => ({ ...prev, failed: prev.total }));
+      setImportErrors([{ name: 'All rows', error: err.message || 'Unknown error' }]);
     }
 
     setIsProcessing(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={(val) => { if (!isProcessing) onOpenChange(val); }}>
+    <Dialog open={open} onOpenChange={(val) => { if (!isProcessing) { if (!val) resetState(); onOpenChange(val); } }}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Bulk Import Students & Old Dues</DialogTitle>
@@ -332,9 +319,19 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
                  </div>
                  <h3 className="text-2xl font-bold text-slate-900">Import Complete</h3>
                  <div className="mt-2 text-slate-600 space-y-1">
-                   <p>Successfully processed: <span className="font-bold text-emerald-600">{progress.current - progress.failed}</span> students</p>
-                   {progress.failed > 0 && <p>Failed imports: <span className="font-bold text-red-600">{progress.failed}</span></p>}
+                   <p>Successfully imported: <span className="font-bold text-emerald-600">{progress.current - progress.failed}</span> students</p>
+                   {progress.failed > 0 && <p>Failed: <span className="font-bold text-red-600">{progress.failed}</span></p>}
                  </div>
+                 {importErrors.length > 0 && (
+                   <div className="mt-4 text-left bg-red-50 border border-red-200 rounded-md p-4 max-h-48 overflow-y-auto">
+                     <h5 className="text-red-800 font-semibold text-sm mb-2">Failed Rows:</h5>
+                     <ul className="text-sm text-red-700 space-y-1 list-disc list-inside">
+                       {importErrors.map((e, i) => (
+                         <li key={i}><span className="font-medium">{e.name}</span>: {e.error}</li>
+                       ))}
+                     </ul>
+                   </div>
+                 )}
                  <div className="mt-8">
                    <Button onClick={() => { onOpenChange(false); onSuccess(); }}>View Students</Button>
                  </div>

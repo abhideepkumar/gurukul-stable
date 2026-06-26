@@ -4,13 +4,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { verify } from "https://deno.land/x/djwt@v2.9.1/mod.ts";
 
 /**
  * Compute HMAC-SHA256 using Web Crypto API (available natively in Deno).
@@ -42,13 +36,21 @@ async function hmacSha256Hex(
 }
 
 serve(async (req) => {
+  const origin = req.headers.get("origin") || "*";
+  
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // ── AUTH CHECK ─────────────────────────────────────────────
+    // ── AUTH CHECK (Local verification to avoid API roundtrip) ──
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -57,19 +59,39 @@ serve(async (req) => {
       );
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const token = authHeader.replace("Bearer ", "");
+    const jwtSecret = Deno.env.get("SUPABASE_JWT_SECRET");
+    
+    if (jwtSecret) {
+      try {
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(jwtSecret),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["verify"]
+        );
+        await verify(token, key);
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    } else {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+      const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser();
+      if (authError || !user) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Unauthorized: invalid or expired session" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
     // ── END AUTH CHECK ─────────────────────────────────────────
 
@@ -79,20 +101,17 @@ serve(async (req) => {
       razorpay_signature,
     } = await req.json();
 
-    // ── Validate inputs ──────────────────────────────────────
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       throw new Error(
         "Missing required fields: razorpay_order_id, razorpay_payment_id, razorpay_signature"
       );
     }
 
-    // ── Read secrets ─────────────────────────────────────────
     const razorpayKeySecret = Deno.env.get("RAZORPAY_KEY_SECRET");
     if (!razorpayKeySecret) {
       throw new Error("Razorpay key secret not configured on the server");
     }
 
-    // ── Verify signature ─────────────────────────────────────
     const expectedSignature = await hmacSha256Hex(
       razorpayKeySecret,
       `${razorpay_order_id}|${razorpay_payment_id}`
@@ -102,35 +121,39 @@ serve(async (req) => {
       throw new Error("Payment signature verification failed — possible tampering");
     }
 
-    // ── Signature is valid — process the payment ─────────────
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Look up the payment intent by gateway_order_id
-    const { data: record, error: fetchError } = await supabase
+    // ── Atomic TOCTOU Check ───────────────────────────────────
+    // Atomically claim this payment intent to process it
+    const { data: record, error: claimError } = await supabase
       .from("payment_intents")
-      .select("*")
+      .update({ status: 'processing' })
       .eq("gateway_order_id", razorpay_order_id)
+      .eq("status", "pending")
+      .select("*")
       .single();
 
-    if (fetchError || !record) {
-      throw new Error(
-        `No payment intent found for order ${razorpay_order_id}`
-      );
-    }
-
-    if (record.status === "success") {
-      // Already processed — return idempotent success
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: "Payment already processed",
-          transaction_id: record.id,
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+    if (claimError || !record) {
+      // Check if it's already successful
+      const { data: existing } = await supabase
+        .from("payment_intents")
+        .select("*")
+        .eq("gateway_order_id", razorpay_order_id)
+        .single();
+        
+      if (existing && existing.status === "success") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Payment already processed",
+            transaction_id: existing.id,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Failed to claim payment intent for order ${razorpay_order_id}`);
     }
 
     // ── Call process_payment RPC ──────────────────────────────
@@ -142,7 +165,7 @@ serve(async (req) => {
     const rpcPayload = {
       p_student_id: record.student_id,
       p_amount: record.amount,
-      p_payment_method: "online",
+      p_payment_method: "razorpay",
       p_reference_id: razorpay_payment_id,
       p_comment: `Razorpay Online Payment (${razorpay_order_id})`,
       p_date: new Date().toISOString().split("T")[0],
@@ -169,16 +192,13 @@ serve(async (req) => {
       .update({ status: "success" })
       .eq("id", record.id);
 
-    // ── Return success with transaction details ──────────────
     return new Response(
       JSON.stringify({
         success: true,
         transaction_id: rpcData?.transaction_id,
         cleared_dues: rpcData?.cleared_dues || [],
       }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err: any) {
     console.error("razorpay-verify error:", err);
