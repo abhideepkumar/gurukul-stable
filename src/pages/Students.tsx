@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Plus, Trash2, Edit, Tag, X, Upload } from 'lucide-react';
+
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
 import { CsvImportModal } from '../components/CsvImportModal';
@@ -190,26 +190,26 @@ export function Students() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900">Students</h2>
-          <p className="text-slate-500">Manage student records and view their dues.</p>
+          <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Students</h2>
+          <p className="text-primary/70 font-body">Manage student records and view their dues.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setIsImportOpen(true)} className="gap-2">
-            <Upload className="h-4 w-4" /> Import CSV
+            <span className="material-symbols-outlined text-[18px]">upload</span> Import CSV
           </Button>
           <Button onClick={() => {
             setIsAddOpen(true);
             setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
             setSelectedFeeStructures([]);
           }} className="gap-2">
-            <Plus className="h-4 w-4" /> Add Student
+            <span className="material-symbols-outlined text-[18px]">add</span> Add Student
           </Button>
         </div>
       </div>
 
       <div className="flex items-center gap-4">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
+          <span className="material-symbols-outlined text-[18px]">search</span>
           <Input
             placeholder="Search by name or phone..."
             className="pl-9"
@@ -254,19 +254,19 @@ export function Students() {
                 <TableCell className="text-right font-medium text-amber-600">
                   ₹{student.current_month_due.toLocaleString()}
                 </TableCell>
-                <TableCell className="text-right font-medium text-slate-900">
+                <TableCell className="text-right font-medium text-primary">
                   ₹{student.pending_amount.toLocaleString()}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-amber-600" title="Manage Discounts" onClick={() => openDiscountDialog(student)}>
-                      <Tag className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-amber-600" title="Manage Discounts" onClick={() => openDiscountDialog(student)}>
+                      <span className="material-symbols-outlined text-[18px]">sell</span>
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-blue-600" onClick={() => handleEditClick(student)}>
-                      <Edit className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-blue-600" onClick={() => handleEditClick(student)}>
+                      <span className="material-symbols-outlined text-[18px]">edit</span>
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-red-600" onClick={() => handleDelete(student.id)}>
-                      <Trash2 className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-red-600" onClick={() => handleDelete(student.id)}>
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
                     </Button>
                   </div>
                 </TableCell>
@@ -274,7 +274,7 @@ export function Students() {
             ))}
             {students.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                <TableCell colSpan={7} className="h-24 text-center text-primary/70 font-body">
                   No students found.
                 </TableCell>
               </TableRow>
@@ -341,7 +341,7 @@ export function Students() {
               {formData.class_id && (
                 <div className="grid gap-2 border-t pt-4 mt-2">
                   <Label>Assigned Fee Structures</Label>
-                  <p className="text-sm text-slate-500 mb-2">These fee structures will generate dues for this student. Default class fees are auto-selected.</p>
+                  <p className="text-sm text-primary/70 font-body mb-2">These fee structures will generate dues for this student. Default class fees are auto-selected.</p>
                   <div className="max-h-40 overflow-y-auto space-y-2 rounded-md border p-3 bg-slate-50">
                     {feeStructures.map(fs => {
                       const isSelected = selectedFeeStructures.includes(fs.id);
@@ -439,26 +439,26 @@ export function Students() {
           <div className="space-y-6">
             {/* Active Discounts */}
             <div>
-              <h4 className="text-sm font-semibold text-slate-700 mb-2">Active Discounts</h4>
+              <h4 className="text-sm font-semibold text-primary/90 mb-2">Active Discounts</h4>
               {studentDiscounts.length === 0 ? (
-                <p className="text-sm text-slate-500 bg-slate-50 rounded-md p-3">No discounts assigned to this student.</p>
+                <p className="text-sm text-primary/70 font-body bg-slate-50 rounded-md p-3">No discounts assigned to this student.</p>
               ) : (
                 <div className="space-y-2">
                   {studentDiscounts.map(sd => (
                     <div key={sd.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white p-3">
                       <div>
-                        <p className="text-sm font-medium text-slate-900">
+                        <p className="text-sm font-medium text-primary">
                           {sd.discount_name}
                           {sd.is_exclusive && <span className="ml-2 text-xs bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">Exclusive</span>}
                         </p>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-primary/70 font-body">
                           {sd.discount_type === 'percentage' ? `${sd.discount_value}%` : `₹${sd.discount_value}`} off · Applies to: {sd.fee_name}
                           {sd.effective_until && ` · Until ${sd.effective_until}`}
                         </p>
                         {sd.notes && <p className="text-xs text-slate-400 mt-0.5">{sd.notes}</p>}
                       </div>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-red-500" onClick={() => handleRemoveDiscount(sd.id)}>
-                        <X className="h-3.5 w-3.5" />
+                        <span className="material-symbols-outlined text-[18px]">close</span>
                       </Button>
                     </div>
                   ))}
@@ -468,7 +468,7 @@ export function Students() {
 
             {/* Assign New Discount */}
             <div className="border-t pt-4">
-              <h4 className="text-sm font-semibold text-slate-700 mb-3">Assign New Discount</h4>
+              <h4 className="text-sm font-semibold text-primary/90 mb-3">Assign New Discount</h4>
               <div className="grid gap-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -515,7 +515,7 @@ export function Students() {
                   </div>
                 </div>
                 <Button onClick={handleAssignDiscount} disabled={!discountForm.discount_id} className="w-full">
-                  <Plus className="h-4 w-4 mr-2" /> Assign Discount
+                  <span className="material-symbols-outlined text-[18px]">add</span> Assign Discount
                 </Button>
               </div>
             </div>

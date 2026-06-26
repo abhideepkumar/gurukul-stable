@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/src/lib/auth';
 import { Navigate } from 'react-router-dom';
-import { Loader2, Lock, Mail, Eye, EyeOff, GraduationCap } from 'lucide-react';
+
 
 export function Login() {
   const { signIn, session, isLoading: authLoading } = useAuth();
@@ -15,7 +15,7 @@ export function Login() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+        <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
       </div>
     );
   }
@@ -42,10 +42,10 @@ export function Login() {
         {/* Header */}
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 shadow-lg">
-            <GraduationCap className="h-8 w-8 text-white" />
+            <span className="material-symbols-outlined text-[18px]">school</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">School Ledger</h1>
-          <p className="mt-1 text-sm text-slate-500">Sign in to manage school finances</p>
+          <h1 className="text-4xl font-headline font-bold tracking-tight text-primary">School Ledger</h1>
+          <p className="mt-1 text-sm text-primary/70 font-body">Sign in to manage school finances</p>
         </div>
 
         {/* Card */}
@@ -54,18 +54,18 @@ export function Login() {
             {/* Error Banner */}
             {error && (
               <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                <Lock className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <span className="material-symbols-outlined text-[18px]">lock</span>
                 <span>{error}</span>
               </div>
             )}
 
             {/* Email */}
             <div className="space-y-2">
-              <label htmlFor="login-email" className="block text-sm font-medium text-slate-700">
+              <label htmlFor="login-email" className="block text-sm font-medium text-primary/90">
                 Email Address
               </label>
               <div className="relative">
-                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <span className="material-symbols-outlined text-[18px]">mail</span>
                 <input
                   id="login-email"
                   type="email"
@@ -81,11 +81,11 @@ export function Login() {
 
             {/* Password */}
             <div className="space-y-2">
-              <label htmlFor="login-password" className="block text-sm font-medium text-slate-700">
+              <label htmlFor="login-password" className="block text-sm font-medium text-primary/90">
                 Password
               </label>
               <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <span className="material-symbols-outlined text-[18px]">lock</span>
                 <input
                   id="login-password"
                   type={showPassword ? 'text' : 'password'}
@@ -103,7 +103,7 @@ export function Login() {
                   tabIndex={-1}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showPassword ? <span className="material-symbols-outlined text-[18px]">visibility_off</span> : <span className="material-symbols-outlined text-[18px]">visibility</span>}
                 </button>
               </div>
             </div>
@@ -116,7 +116,7 @@ export function Login() {
             >
               {isSubmitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
                   Signing in…
                 </>
               ) : (

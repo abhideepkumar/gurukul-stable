@@ -6,7 +6,7 @@ import { Label } from '@/src/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/src/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/src/components/ui/dialog';
-import { Plus, Trash2, Settings } from 'lucide-react';
+
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
 
@@ -106,7 +106,7 @@ export default function Classes() {
           <h1 className="text-3xl font-bold tracking-tight">Classes</h1>
           <p className="text-muted-foreground">Manage classes and their default fee structures.</p>
         </div>
-        <Button onClick={() => setIsAddOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add Class</Button>
+        <Button onClick={() => setIsAddOpen(true)}><span className="material-symbols-outlined text-[18px]">add</span> Add Class</Button>
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
           <DialogContent>
             <DialogHeader>
@@ -151,7 +151,7 @@ export default function Classes() {
                     <TableCell className="font-medium">{cls.name}</TableCell>
                     <TableCell className="text-right">
                       <Button variant="outline" size="sm" onClick={() => openDefaults(cls)}>
-                        <Settings className="mr-2 h-4 w-4" />
+                        <span className="material-symbols-outlined text-[18px]">settings</span>
                         Manage Default Fees
                       </Button>
                     </TableCell>
@@ -223,7 +223,7 @@ export default function Classes() {
                         <TableCell className="capitalize">{def.frequency}</TableCell>
                         <TableCell>
                           <Button variant="ghost" size="icon" onClick={() => handleRemoveDefault(def.fee_structure_id)}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <span className="material-symbols-outlined text-[18px]">delete</span>
                           </Button>
                         </TableCell>
                       </TableRow>

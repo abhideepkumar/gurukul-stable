@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Label } from '@/src/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
-import { Plus, Trash2, Edit, Percent, BadgeDollarSign, ShieldAlert } from 'lucide-react';
+
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export function Discounts() {
@@ -146,7 +146,7 @@ export function Discounts() {
               value={formData.max_discount_amount}
               onChange={e => setFormData({...formData, max_discount_amount: e.target.value})}
             />
-            <p className="text-xs text-slate-500">Even if percentage is high, discount won't exceed this amount.</p>
+            <p className="text-xs text-primary/70 font-body">Even if percentage is high, discount won't exceed this amount.</p>
           </div>
         )}
 
@@ -157,7 +157,7 @@ export function Discounts() {
             value={formData.priority}
             onChange={e => setFormData({...formData, priority: e.target.value})}
           />
-          <p className="text-xs text-slate-500">When multiple discounts stack, percentage discounts with lower priority are applied first.</p>
+          <p className="text-xs text-primary/70 font-body">When multiple discounts stack, percentage discounts with lower priority are applied first.</p>
         </div>
 
         <div className="flex items-center gap-3 p-3 rounded-md border border-amber-200 bg-amber-50">
@@ -185,11 +185,11 @@ export function Discounts() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900">Discounts</h2>
-          <p className="text-slate-500">Define reusable discount types that can be assigned to students.</p>
+          <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Discounts</h2>
+          <p className="text-primary/70 font-body">Define reusable discount types that can be assigned to students.</p>
         </div>
         <Button onClick={() => { setIsAddOpen(true); resetForm(); }} className="gap-2">
-          <Plus className="h-4 w-4" /> Add Discount
+          <span className="material-symbols-outlined text-[18px]">add</span> Add Discount
         </Button>
       </div>
 
@@ -213,9 +213,9 @@ export function Discounts() {
                 <TableCell>
                   <span className="inline-flex items-center gap-1 text-sm">
                     {d.discount_type === 'percentage' ? (
-                      <><Percent className="h-3 w-3 text-blue-500" /> Percentage</>
+                      <><span className="material-symbols-outlined text-[18px]">percent</span> Percentage</>
                     ) : (
-                      <><BadgeDollarSign className="h-3 w-3 text-emerald-500" /> Fixed</>
+                      <><span className="material-symbols-outlined text-[18px]">monetization_on</span> Fixed</>
                     )}
                   </span>
                 </TableCell>
@@ -229,17 +229,17 @@ export function Discounts() {
                 <TableCell>
                   {d.is_exclusive && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                      <ShieldAlert className="h-3 w-3" /> Exclusive
+                      <span className="material-symbols-outlined text-[18px]">gpp_maybe</span> Exclusive
                     </span>
                   )}
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-blue-600" onClick={() => handleEditClick(d)}>
-                      <Edit className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-blue-600" onClick={() => handleEditClick(d)}>
+                      <span className="material-symbols-outlined text-[18px]">edit</span>
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-red-600" onClick={() => handleDelete(d.id)}>
-                      <Trash2 className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-red-600" onClick={() => handleDelete(d.id)}>
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
                     </Button>
                   </div>
                 </TableCell>
@@ -247,7 +247,7 @@ export function Discounts() {
             ))}
             {discounts.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                <TableCell colSpan={7} className="h-24 text-center text-primary/70 font-body">
                   No discounts defined. Create your first discount to get started.
                 </TableCell>
               </TableRow>

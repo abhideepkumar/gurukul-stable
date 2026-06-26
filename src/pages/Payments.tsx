@@ -6,7 +6,7 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Search, Receipt, Printer, Loader2, AlertTriangle, XCircle, Plus, History } from 'lucide-react';
+
 import { format } from 'date-fns';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { useDebounce } from '../hooks/use-debounce';
@@ -292,15 +292,15 @@ export function Payments() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight text-slate-900">Payments & Dues</h2>
-        <p className="text-slate-500">Record payments for students.</p>
+        <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Payments & Dues</h2>
+        <p className="text-primary/70 font-body">Record payments for students.</p>
       </div>
 
       {!selectedStudent ? (
         <div className="max-w-xl space-y-4">
           <Label>Search Student to Manage</Label>
           <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
+            <span className="material-symbols-outlined text-[18px]">search</span>
             <Input
               placeholder="Search by name or phone..."
               className="pl-9"
@@ -318,7 +318,7 @@ export function Payments() {
                 >
                   <div>
                     <div className="font-medium">{student.name}</div>
-                    <div className="text-sm text-slate-500">{student.class_name} {student.section && `-${student.section}`} • {student.phone}</div>
+                    <div className="text-sm text-primary/70 font-body">{student.class_name} {student.section && `-${student.section}`} • {student.phone}</div>
                   </div>
                   <div className="text-right text-sm font-medium text-red-600">
                     Pending: ₹{student.pending_amount.toLocaleString()}
@@ -333,23 +333,23 @@ export function Payments() {
           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
             <div>
               <h3 className="text-xl font-semibold">{selectedStudent.name}</h3>
-              <p className="text-slate-500">{selectedStudent.class_name} {selectedStudent.section && `-${selectedStudent.section}`} • {selectedStudent.phone}</p>
+              <p className="text-primary/70 font-body">{selectedStudent.class_name} {selectedStudent.section && `-${selectedStudent.section}`} • {selectedStudent.phone}</p>
             </div>
             <Button variant="outline" onClick={() => setSelectedStudent(null)}>Change Student</Button>
           </div>
 
           <div className="flex border-b border-slate-200">
             <button 
-              className={`px-4 py-2 font-medium text-sm border-b-2 flex items-center gap-2 ${activeTab === 'pending' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
+              className={`px-4 py-2 font-medium text-sm border-b-2 flex items-center gap-2 ${activeTab === 'pending' ? 'border-blue-600 text-blue-600' : 'border-transparent text-primary/70 font-body hover:text-primary/90 hover:border-slate-300'}`}
               onClick={() => setActiveTab('pending')}
             >
-              <Receipt className="h-4 w-4" /> Pending Dues
+              <span className="material-symbols-outlined text-[18px]">receipt_long</span> Pending Dues
             </button>
             <button 
-              className={`px-4 py-2 font-medium text-sm border-b-2 flex items-center gap-2 ${activeTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
+              className={`px-4 py-2 font-medium text-sm border-b-2 flex items-center gap-2 ${activeTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-primary/70 font-body hover:text-primary/90 hover:border-slate-300'}`}
               onClick={() => setActiveTab('history')}
             >
-              <History className="h-4 w-4" /> Payment History
+              <span className="material-symbols-outlined text-[18px]">history</span> Payment History
             </button>
           </div>
 
@@ -359,7 +359,7 @@ export function Payments() {
               <div className="flex justify-between items-center">
                 <h4 className="text-lg font-medium">1. Select Dues to Pay</h4>
                 <Button size="sm" variant="outline" onClick={() => setIsAddBillOpen(true)} className="gap-2">
-                  <Plus className="h-4 w-4" /> Add Custom Bill
+                  <span className="material-symbols-outlined text-[18px]">add</span> Add Custom Bill
                 </Button>
               </div>
               <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
@@ -391,7 +391,7 @@ export function Payments() {
                           </TableCell>
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2">
-                              {isLateFee && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />}
+                              {isLateFee && <span className="material-symbols-outlined text-[18px]">warning</span>}
                               <div>
                                 {isLateFee ? 'Late Fee' : due.fee_name}
                                 {isLateFee && <span className="text-xs text-slate-400 ml-1">({due.fee_name})</span>}
@@ -424,7 +424,7 @@ export function Payments() {
                                   title="Waive this late fee"
                                   onClick={() => handleWaiveDue(due.id)}
                                 >
-                                  <XCircle className="h-3.5 w-3.5" />
+                                  <span className="material-symbols-outlined text-[18px]">close</span>
                                 </Button>
                               )}
                               {isSelected ? (
@@ -447,7 +447,7 @@ export function Payments() {
                     })}
                     {dues.filter(d => d.status !== 'paid').length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="h-24 text-center text-slate-500">
+                        <TableCell colSpan={5} className="h-24 text-center text-primary/70 font-body">
                           No pending dues available for payment.
                         </TableCell>
                       </TableRow>
@@ -475,7 +475,7 @@ export function Payments() {
                     <div className="h-10 w-full rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-lg font-bold text-blue-700 flex items-center">
                       ₹{Object.values(allocations).reduce((sum: number, val) => sum + ((val as number) || 0), 0).toLocaleString()}
                     </div>
-                    <p className="text-[10px] text-slate-500 italic">Automatically calculated from allocations above.</p>
+                    <p className="text-[10px] text-primary/70 font-body italic">Automatically calculated from allocations above.</p>
                   </div>
                   
                   <div className="grid gap-2">
@@ -517,7 +517,7 @@ export function Payments() {
                     disabled={isProcessing}
                   >
                     {isProcessing ? (
-                      <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Processing...</>
+                      <><span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span> Processing...</>
                     ) : paymentData.payment_method === 'razorpay' ? (
                       "Pay with Razorpay"
                     ) : (
@@ -549,7 +549,7 @@ export function Payments() {
                       <TableRow key={tx.id}>
                         <TableCell className="font-medium">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
                         <TableCell className="capitalize">{tx.payment_method}</TableCell>
-                        <TableCell className="text-slate-500 text-sm">{tx.reference_id || '-'}</TableCell>
+                        <TableCell className="text-primary/70 font-body text-sm">{tx.reference_id || '-'}</TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1 max-w-[250px]">
                             {tx.allocations_details?.map((alloc: any, idx: number) => (
@@ -566,7 +566,7 @@ export function Payments() {
                     ))}
                     {history.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="h-24 text-center text-slate-500">
+                        <TableCell colSpan={5} className="h-24 text-center text-primary/70 font-body">
                           No payment history found for this student.
                         </TableCell>
                       </TableRow>
@@ -603,7 +603,7 @@ export function Payments() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsAddBillOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={isAddingBill}>
-                {isAddingBill ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Adding...</> : 'Add Bill'}
+                {isAddingBill ? <><span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span> Adding...</> : 'Add Bill'}
               </Button>
             </DialogFooter>
           </form>
@@ -620,24 +620,24 @@ export function Payments() {
             <div className="space-y-6 print:p-8" id="receipt-content">
               <div className="text-center border-b pb-4">
                 <h2 className="text-2xl font-bold">School Fee System</h2>
-                <p className="text-sm text-slate-500">Official Payment Receipt</p>
+                <p className="text-sm text-primary/70 font-body">Official Payment Receipt</p>
               </div>
               
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-slate-500">Transaction ID</p>
+                  <p className="text-primary/70 font-body">Transaction ID</p>
                   <p className="font-medium">{receiptData.transaction_id.split('-')[0].toUpperCase()}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-slate-500">Date</p>
+                  <p className="text-primary/70 font-body">Date</p>
                   <p className="font-medium">{format(new Date(receiptData.date), 'dd MMM yyyy')}</p>
                 </div>
                 <div>
-                  <p className="text-slate-500">Student Name</p>
+                  <p className="text-primary/70 font-body">Student Name</p>
                   <p className="font-medium">{receiptData.student_name}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-slate-500">Class</p>
+                  <p className="text-primary/70 font-body">Class</p>
                   <p className="font-medium">{receiptData.class_name} {receiptData.section && `-${receiptData.section}`}</p>
                 </div>
               </div>
@@ -670,7 +670,7 @@ export function Payments() {
 
               {receiptData.cleared_dues && receiptData.cleared_dues.length > 0 && (
                 <div>
-                  <h4 className="font-medium text-sm mb-2 text-slate-500 border-b pb-1">Payment Breakdown</h4>
+                  <h4 className="font-medium text-sm mb-2 text-primary/70 font-body border-b pb-1">Payment Breakdown</h4>
                   <div className="text-sm space-y-3 mt-3">
                     {receiptData.cleared_dues.map((due: any, idx: number) => {
                       const balanceBeforeThisPayment = due.total_due_amount - due.previous_paid_amount;
@@ -678,15 +678,15 @@ export function Payments() {
                       
                       return (
                         <div key={idx} className="flex flex-col space-y-1 pb-2 border-b border-slate-100 last:border-0">
-                          <div className="flex justify-between font-medium text-slate-900">
+                          <div className="flex justify-between font-medium text-primary">
                             <span>
                               {due.due_type === 'late_fee' ? 'Late Fee: ' : ''}{due.fee_name} 
-                              <span className="text-slate-500 font-normal text-xs ml-1">({format(new Date(due.due_date), 'MMM yyyy')})</span>
+                              <span className="text-primary/70 font-body font-normal text-xs ml-1">({format(new Date(due.due_date), 'MMM yyyy')})</span>
                             </span>
                             <span>₹{due.amount_allocated.toLocaleString()}</span>
                           </div>
                           
-                          <div className="flex justify-between text-xs text-slate-500">
+                          <div className="flex justify-between text-xs text-primary/70 font-body">
                              <div>
                                Base: ₹{due.original_amount.toLocaleString()}
                                {due.discount_amount > 0 && ` | Discount: -₹${due.discount_amount.toLocaleString()}`}
@@ -718,7 +718,7 @@ export function Payments() {
           <DialogFooter className="print:hidden">
             <Button type="button" variant="outline" onClick={() => setIsReceiptOpen(false)}>Close</Button>
             <Button onClick={handlePrint} className="gap-2">
-              <Printer className="h-4 w-4" /> Print Receipt
+              <span className="material-symbols-outlined text-[18px]">print</span> Print Receipt
             </Button>
           </DialogFooter>
         </DialogContent>

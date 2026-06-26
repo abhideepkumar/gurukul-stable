@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
 import { Label } from '@/src/components/ui/label';
-import { Plus, Trash2 } from 'lucide-react';
+
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
 
@@ -59,11 +59,11 @@ export function FeeStructures() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900">Fee Structures</h2>
-          <p className="text-slate-500">Define reusable fee types and their frequencies.</p>
+          <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Fee Structures</h2>
+          <p className="text-primary/70 font-body">Define reusable fee types and their frequencies.</p>
         </div>
         <Button onClick={() => setIsAddOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" /> Add Fee
+          <span className="material-symbols-outlined text-[18px]">add</span> Add Fee
         </Button>
       </div>
 
@@ -85,8 +85,8 @@ export function FeeStructures() {
                 <TableCell className="capitalize">{fee.frequency}</TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-red-600" onClick={() => handleDelete(fee.id)}>
-                      <Trash2 className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-red-600" onClick={() => handleDelete(fee.id)}>
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
                     </Button>
                   </div>
                 </TableCell>
@@ -94,7 +94,7 @@ export function FeeStructures() {
             ))}
             {fees.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="h-24 text-center text-slate-500">
+                <TableCell colSpan={4} className="h-24 text-center text-primary/70 font-body">
                   No fee structures defined.
                 </TableCell>
               </TableRow>

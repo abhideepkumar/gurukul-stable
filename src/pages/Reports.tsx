@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { api, DEFAULT_PAGE_SIZE, type PaginatedResult } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
-import { Download } from 'lucide-react';
+
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
 
@@ -119,23 +119,23 @@ export function Reports() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900">Reports</h2>
-          <p className="text-slate-500">View and export financial reports.</p>
+          <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Reports</h2>
+          <p className="text-primary/70 font-body">View and export financial reports.</p>
         </div>
         <Button onClick={handleExportCSV} className="gap-2">
-          <Download className="h-4 w-4" /> Export CSV
+          <span className="material-symbols-outlined text-[18px]">download</span> Export CSV
         </Button>
       </div>
 
       <div className="flex gap-4 border-b border-slate-200">
         <button
-          className={`pb-2 text-sm font-medium ${activeTab === 'defaulters' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`pb-2 text-sm font-medium ${activeTab === 'defaulters' ? 'border-b-2 border-slate-900 text-primary' : 'text-primary/70 font-body hover:text-primary/90'}`}
           onClick={() => setActiveTab('defaulters')}
         >
           Defaulters List
         </button>
         <button
-          className={`pb-2 text-sm font-medium ${activeTab === 'transactions' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`pb-2 text-sm font-medium ${activeTab === 'transactions' ? 'border-b-2 border-slate-900 text-primary' : 'text-primary/70 font-body hover:text-primary/90'}`}
           onClick={() => setActiveTab('transactions')}
         >
           Transactions
@@ -167,7 +167,7 @@ export function Reports() {
                 ))}
                 {allDefaulters.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="h-24 text-center text-slate-500">
+                    <TableCell colSpan={4} className="h-24 text-center text-primary/70 font-body">
                       No defaulters found.
                     </TableCell>
                   </TableRow>
@@ -225,7 +225,7 @@ export function Reports() {
                 ))}
                 {transactions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center text-slate-500">
+                    <TableCell colSpan={6} className="h-24 text-center text-primary/70 font-body">
                       No transactions found.
                     </TableCell>
                   </TableRow>

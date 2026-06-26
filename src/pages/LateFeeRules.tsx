@@ -5,7 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Label } from '@/src/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/src/components/ui/dialog';
-import { Plus, Trash2, Clock, AlertTriangle } from 'lucide-react';
+
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 
 export function LateFeeRules() {
@@ -109,11 +109,11 @@ export function LateFeeRules() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-slate-900">Late Fee Rules</h2>
-          <p className="text-slate-500">Configure automatic penalties for overdue payments.</p>
+          <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Late Fee Rules</h2>
+          <p className="text-primary/70 font-body">Configure automatic penalties for overdue payments.</p>
         </div>
         <Button onClick={() => { setIsAddOpen(true); resetForm(); }} className="gap-2">
-          <Plus className="h-4 w-4" /> Add Rule
+          <span className="material-symbols-outlined text-[18px]">add</span> Add Rule
         </Button>
       </div>
 
@@ -139,7 +139,7 @@ export function LateFeeRules() {
                 <TableCell>{rule.class_name}</TableCell>
                 <TableCell>
                   <span className="inline-flex items-center gap-1 text-sm">
-                    <Clock className="h-3 w-3 text-slate-400" />
+                    <span className="material-symbols-outlined text-[18px]">schedule</span>
                     {rule.grace_period_days} days
                   </span>
                 </TableCell>
@@ -157,15 +157,15 @@ export function LateFeeRules() {
                   {rule.max_penalty ? `₹${rule.max_penalty.toLocaleString()}` : '—'}
                 </TableCell>
                 <TableCell>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-red-600" onClick={() => handleDelete(rule.id)}>
-                    <Trash2 className="h-4 w-4" />
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-red-600" onClick={() => handleDelete(rule.id)}>
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
                   </Button>
                 </TableCell>
               </TableRow>
             ))}
             {rules.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="h-24 text-center text-slate-500">
+                <TableCell colSpan={8} className="h-24 text-center text-primary/70 font-body">
                   No late fee rules defined. Late fees won't be charged until you create a rule.
                 </TableCell>
               </TableRow>
@@ -218,7 +218,7 @@ export function LateFeeRules() {
               <div className="grid gap-2">
                 <Label>Grace Period (days after due date)</Label>
                 <Input type="number" min="0" value={formData.grace_period_days} onChange={e => setFormData({...formData, grace_period_days: e.target.value})} />
-                <p className="text-xs text-slate-500">Penalty won't apply until this many days after the due date.</p>
+                <p className="text-xs text-primary/70 font-body">Penalty won't apply until this many days after the due date.</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -260,7 +260,7 @@ export function LateFeeRules() {
               {/* Preview */}
               {previewPenalty() && (
                 <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <span className="material-symbols-outlined text-[18px]">warning</span>
                   <div>
                     <p className="text-sm font-medium text-amber-800">Preview</p>
                     <p className="text-xs text-amber-700">{previewPenalty()}</p>

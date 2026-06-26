@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+
 import { Button } from './button';
 import { cn } from '@/src/lib/utils';
 
@@ -55,10 +55,10 @@ export function Pagination({
 
   return (
     <div className={cn('flex flex-col sm:flex-row items-center justify-between gap-4 px-2 py-4', className)}>
-      <p className="text-sm text-slate-500">
-        Showing <span className="font-medium text-slate-700">{rangeStart}</span>–
-        <span className="font-medium text-slate-700">{rangeEnd}</span> of{' '}
-        <span className="font-medium text-slate-700">{totalItems}</span>
+      <p className="text-sm font-body text-primary/70">
+        Showing <span className="font-medium text-primary">{rangeStart}</span>–
+        <span className="font-medium text-primary">{rangeEnd}</span> of{' '}
+        <span className="font-medium text-primary">{totalItems}</span>
       </p>
 
       <div className="flex items-center gap-1">
@@ -66,30 +66,28 @@ export function Pagination({
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
           disabled={currentPage === 1}
           onClick={() => onPageChange(1)}
           aria-label="First page"
         >
-          <ChevronsLeft className="h-4 w-4" />
+          <span className="material-symbols-outlined text-[18px]">keyboard_double_arrow_left</span>
         </Button>
 
         {/* Previous page */}
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
           disabled={currentPage === 1}
           onClick={() => onPageChange(currentPage - 1)}
           aria-label="Previous page"
         >
-          <ChevronLeft className="h-4 w-4" />
+          <span className="material-symbols-outlined text-[18px]">chevron_left</span>
         </Button>
 
         {/* Page numbers */}
         {getPageNumbers().map((p, idx) =>
           p === '...' ? (
-            <span key={`ellipsis-${idx}`} className="px-1 text-slate-400 text-sm select-none">
+            <span key={`ellipsis-${idx}`} className="px-1 text-primary/40 text-sm select-none">
               …
             </span>
           ) : (
@@ -97,7 +95,7 @@ export function Pagination({
               key={p}
               variant={p === currentPage ? 'default' : 'outline'}
               size="icon"
-              className={cn('h-8 w-8 text-xs', p === currentPage && 'pointer-events-none')}
+              className={cn('text-sm', p === currentPage && 'pointer-events-none')}
               onClick={() => onPageChange(p)}
             >
               {p}
@@ -109,24 +107,22 @@ export function Pagination({
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
           disabled={currentPage === totalPages}
           onClick={() => onPageChange(currentPage + 1)}
           aria-label="Next page"
         >
-          <ChevronRight className="h-4 w-4" />
+          <span className="material-symbols-outlined text-[18px]">chevron_right</span>
         </Button>
 
         {/* Last page */}
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
           disabled={currentPage === totalPages}
           onClick={() => onPageChange(totalPages)}
           aria-label="Last page"
         >
-          <ChevronsRight className="h-4 w-4" />
+          <span className="material-symbols-outlined text-[18px]">keyboard_double_arrow_right</span>
         </Button>
       </div>
     </div>
