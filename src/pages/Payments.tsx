@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '@/src/lib/api';
 import { useAuth } from '@/src/lib/auth';
 import { Button } from '@/src/components/ui/button';
@@ -10,6 +10,7 @@ import { Label } from '@/src/components/ui/label';
 import { format } from 'date-fns';
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { useDebounce } from '../hooks/use-debounce';
+import { logger } from '@/src/lib/logger';
 
 // Declare Razorpay on window (loaded from checkout.js in index.html)
 declare global {
@@ -53,7 +54,7 @@ export function Payments() {
   };
 
   const loadHistory = (studentId: string) => {
-    api.getStudentTransactions(studentId).then(setHistory).catch(console.error);
+    api.getStudentTransactions(studentId).then((res) => setHistory(Array.isArray(res) ? res : (res as any).data ?? [])).catch((e) => logger.error('History load failed', e, { studentId }));
   };
 
   const handleSelectStudent = async (student: any) => {
@@ -61,15 +62,16 @@ export function Payments() {
     setSearch('');
     setStudents([]);
     setAllocations({});
-    // Evaluate late fees on-demand, then load dues
+    // Single RPC: evaluates late fees + returns dues + recent history
     try {
-      await api.evaluateLateFees(student.id);
+      const billing = await api.getStudentBilling(student.id);
+      setDues(billing.dues ?? []);
+      setHistory(billing.transactions ?? []);
     } catch (err) {
-      // Late fee evaluation may fail if no rules exist, that's OK
-      console.warn('Late fee evaluation:', err);
+      logger.warn('Billing load failed, falling back', { studentId: student.id });
+      loadDues(student.id);
+      loadHistory(student.id);
     }
-    loadDues(student.id);
-    loadHistory(student.id);
   };
 
   const handleWaiveDue = async (dueId: string) => {
@@ -106,6 +108,7 @@ export function Payments() {
 
   const handlePayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessing) return;
     
     const allocationArray = Object.entries(allocations)
       .filter(([_, amount]) => (amount as number) > 0)
@@ -117,6 +120,8 @@ export function Payments() {
     }
 
     const totalAllocated = allocationArray.reduce((sum, alloc) => sum + alloc.amount_allocated, 0);
+    // Idempotency key: one per submit attempt, reused on retry-safe paths
+    const idempotencyKey = crypto.randomUUID();
 
     const buildEnrichedDues = (clearedDues: any[]) => {
       return clearedDues.map(cd => {
@@ -177,9 +182,11 @@ export function Payments() {
               });
               setIsReceiptOpen(true);
               setAllocations({});
+              // Dashboard caches stats for 5 min — a payment makes it stale
+              localStorage.removeItem('gurukul_dashboard_cache');
               loadDues(selectedStudent.id);
             } catch (verifyErr: any) {
-              console.error(verifyErr);
+              logger.error('Razorpay verify failed', verifyErr);
               alert(verifyErr.message || 'Payment verification failed');
             } finally {
               setIsProcessing(false);
@@ -210,6 +217,7 @@ export function Payments() {
       }
 
       // ── Cash / Manual Online Flow (existing) ────────────────
+      setIsProcessing(true);
       const res = await api.processPayment({
         student_id: selectedStudent.id,
         amount: totalAllocated,
@@ -217,7 +225,8 @@ export function Payments() {
         reference_id: paymentData.reference_id,
         comment: paymentData.comment,
         date: paymentData.date,
-        allocations: allocationArray
+        allocations: allocationArray,
+        idempotency_key: idempotencyKey,
       });
       
       setReceiptData({
@@ -236,10 +245,14 @@ export function Payments() {
 
       setPaymentData({ payment_method: 'cash', reference_id: '', comment: '', date: format(new Date(), 'yyyy-MM-dd') });
       setAllocations({});
+      // Dashboard caches stats for 5 min — a payment makes it stale
+      localStorage.removeItem('gurukul_dashboard_cache');
       loadDues(selectedStudent.id);
     } catch (err: any) {
-      console.error(err);
+      logger.error('Payment failed', err, { studentId: selectedStudent?.id });
       alert(err.message || 'Failed to process payment');
+    } finally {
+      setIsProcessing(false);
     }
   };
 

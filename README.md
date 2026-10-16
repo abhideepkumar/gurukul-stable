@@ -144,27 +144,18 @@ npm run dev
 
 ### Step 3: Run the Database Schema
 
-Open **SQL Editor** in your Supabase dashboard and run the following files **in order**:
-
-> ⚠️ **For a FRESH project** — run only `schema.sql`. It contains everything merged together.
->
-> **For an EXISTING project** that was set up with older files — run only the phases you haven't applied yet.
+Open **SQL Editor** in your Supabase dashboard and run `supabase/schema.sql` —
+the single checkpoint file. It is re-runnable on older databases too.
 
 #### Fresh Project (Recommended)
 
 ```
-1. supabase/schema.sql          ← Run this ONLY (contains all phases merged)
+1. supabase/schema.sql          ← Run this ONLY (CHECKPOINT v1 — everything merged)
 ```
 
-#### Existing Project (Phase-by-Phase)
-
-```
-1. supabase/schema.sql           ← Base schema (tables, RLS, core RPCs)
-2. supabase/phase1_discounts.sql ← Discount system
-3. supabase/phase2_late_fees.sql ← Late fee rules
-4. supabase/phase3_optimizations.sql ← Indexes, Views, new RPCs
-5. supabase/phase4_hotfixes.sql  ← Critical fixes (run this if you've run phase3 already)
-```
+The file is re-runnable: safe to re-apply on a database created before this
+checkpoint (backfills `idempotency_key`, drops the old 7-arg `process_payment`).
+Future changes will ship as new versioned files (`V2__*.sql`, `V3__*.sql`, …).
 
 > **How to run**: In Supabase Dashboard → SQL Editor → paste the file contents → click **Run (F5)**.
 
@@ -250,13 +241,8 @@ gurukul2/
 │       ├── Reports.tsx          # Defaulters & transaction reports
 │       └── Login.tsx            # Auth page
 ├── supabase/
-│   ├── schema.sql               # ★ CANONICAL schema — run this for fresh projects
-│   ├── phase1_discounts.sql     # Discount system migration
-│   ├── phase2_late_fees.sql     # Late fee system migration
-│   ├── phase3_optimizations.sql # Performance & RPC optimizations
-│   ├── phase4_hotfixes.sql      # Critical bug fixes
-│   ├── migrate_rls_to_auth.sql  # (Legacy) RLS policy migration
-│   ├── secure_rpcs.sql          # (Legacy) RPC security grants
+│   ├── schema.sql               # ★ CHECKPOINT v1 — the ONLY file to run
+│   ├── V2__*.sql …              # Future changes go here (new versioned files)
 │   └── functions/
 │       ├── razorpay-create-order/index.ts
 │       └── razorpay-verify/index.ts
@@ -306,10 +292,33 @@ Edge function secrets (set via `supabase secrets set`, never in `.env`):
 ## Production Build
 
 ```bash
-npm run build   # Outputs to /dist
+npm run build   # tsc --noEmit + vite build → /dist
 ```
 
-Deploy the `/dist` folder to any static host (Netlify, Vercel, Cloudflare Pages, GitHub Pages). No server required.
+Deploy the `/dist` folder to any static host (Netlify, Vercel, Cloudflare Pages, GitHub Pages). No server required. `public/_headers` ships CSP + `X-Frame-Options` for Netlify/Cloudflare.
+
+---
+
+## Deploy to Cloudflare Pages
+
+Dashboard → Workers & Pages → Create → Pages → connect repo:
+Build command: `npm run build` · Output: `dist` · Node: `20`
+Env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (Production + Preview).
+SPA fallback ships via `public/_redirects`, security headers via `public/_headers`
+(CSP already allows Razorpay checkout + fonts). No `wrangler.toml` needed for static.
+
+---
+
+## Backup & Restore (Free tier has NO PITR — do this weekly)
+
+```bash
+# Weekly dump (Supabase Dashboard → Database → Backups, or via connection string):
+pg_dump "$DATABASE_URL" -Fc -f gurukul_$(date +%F).dump
+# Restore test to a staging project:
+pg_restore -d "$STAGING_DATABASE_URL" gurukul_YYYY-MM-DD.dump
+```
+
+Keep 4 weekly dumps off-site. Before any `supabase/*.sql` run, take a manual dump. `schema.sql` is the single checkpoint — re-running it is safe.
 
 ---
 
@@ -332,5 +341,5 @@ Deploy the `/dist` folder to any static host (Netlify, Vercel, Cloudflare Pages,
 | "Missing VITE_SUPABASE_URL" | Verify `.env.local` exists with correct values |
 | Students list is empty after import | Run `schema.sql` again — `student_summary` view may not exist |
 | Razorpay payment fails | Check Edge Function logs in Supabase Dashboard → Edge Functions |
-| "relation student_summary does not exist" | Run `phase3_optimizations.sql` or the full `schema.sql` |
+| "relation student_summary does not exist" | Run the full `schema.sql` (view lives there) |
 | Class not found during CSV import | Class name in CSV must exactly match a class in the system |

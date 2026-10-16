@@ -1,17 +1,22 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { api, DEFAULT_PAGE_SIZE, type PaginatedResult } from '@/src/lib/api';
 import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/src/components/ui/table';
 
 import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 import { Pagination } from '../components/ui/Pagination';
+import { useDebounce } from '../hooks/use-debounce';
 
 export function Reports() {
   const [activeTab, setActiveTab] = useState<'defaulters' | 'transactions'>('defaulters');
 
-  // ── Defaulters (client-side pagination — data is aggregated in JS) ──
-  const [allDefaulters, setAllDefaulters] = useState<any[]>([]);
+  // ── Defaulters (server-side pagination) ──
+  const [defaulters, setDefaulters] = useState<any[]>([]);
   const [defPage, setDefPage] = useState(1);
+  const [defTotal, setDefTotal] = useState(0);
+  const [defSearch, setDefSearch] = useState('');
+  const debouncedDefSearch = useDebounce(defSearch, 300);
 
   // ── Transactions (server-side pagination) ──
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -21,22 +26,29 @@ export function Reports() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [error, setError] = useState<Error | null>(null);
 
-  // ── Load defaulters (all at once — aggregation happens in api.ts) ──
-  useEffect(() => {
-    if (activeTab === 'defaulters') {
-      api.getDefaulters().then(setAllDefaulters).catch(setError);
-    }
-  }, [activeTab]);
+  // ── Load defaulters (server paginated) ──
+  const loadDefaulters = (page: number, search: string) => {
+    api.getDefaulters(page, DEFAULT_PAGE_SIZE, search)
+      .then((res) => {
+        const result = res as PaginatedResult<any>;
+        setDefaulters(result.data);
+        setDefTotal(result.total);
+      })
+      .catch(setError);
+  };
 
-  // Client-side paginated slice for defaulters
-  const paginatedDefaulters = useMemo(() => {
-    const from = (defPage - 1) * DEFAULT_PAGE_SIZE;
-    return allDefaulters.slice(from, from + DEFAULT_PAGE_SIZE);
-  }, [allDefaulters, defPage]);
+  useEffect(() => {
+    if (activeTab === 'defaulters') loadDefaulters(defPage, debouncedDefSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, defPage, debouncedDefSearch]);
+
+  useEffect(() => {
+    setDefPage(1);
+  }, [debouncedDefSearch]);
 
   // ── Load transactions (server-side pagination) ──
-  const loadTransactions = () => {
-    api.getTransactions(dateRange.start, dateRange.end, txPage, DEFAULT_PAGE_SIZE)
+  const loadTransactions = (page: number) => {
+    api.getTransactions(dateRange.start, dateRange.end, page, DEFAULT_PAGE_SIZE)
       .then((res) => {
         const result = res as PaginatedResult<any>;
         setTransactions(result.data);
@@ -47,14 +59,15 @@ export function Reports() {
 
   useEffect(() => {
     if (activeTab === 'transactions') {
-      loadTransactions();
+      loadTransactions(txPage);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, txPage]);
 
-  // Reset tx page when filters applied manually
+  // Reset tx page when filters applied manually (effect does the fetch)
   const handleFilter = () => {
     setTxPage(1);
-    loadTransactions();
+    if (txPage === 1) loadTransactions(1);
   };
 
   // Sanitize a CSV cell to prevent CSV injection (formula injection).
@@ -74,12 +87,24 @@ export function Reports() {
     return safe;
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     const rows: string[][] = [];
     
     if (activeTab === 'defaulters') {
       rows.push(["Name", "Class", "Phone", "Overdue Amount"]);
-      allDefaulters.forEach(d => {
+      // Export all filtered defaulters (paged RPC caps at 100/page — loop)
+      let all: any[] = defaulters;
+      if (defTotal > defaulters.length) {
+        try {
+          const pages = Math.ceil(defTotal / 100);
+          all = [];
+          for (let p = 1; p <= pages; p++) {
+            const res = await api.getDefaulters(p, 100, debouncedDefSearch) as PaginatedResult<any>;
+            all = all.concat(res.data);
+          }
+        } catch { all = defaulters; }
+      }
+      all.forEach(d => {
         rows.push([
           sanitizeCSVCell(d.name),
           sanitizeCSVCell(d.class_name),
@@ -89,7 +114,13 @@ export function Reports() {
       });
     } else {
       rows.push(["Date", "Student Name", "Class", "Amount", "Method", "Reference ID"]);
-      transactions.forEach(t => {
+      // Export all filtered transactions, not just current page
+      let allTx = transactions;
+      try {
+        const full = await api.getTransactions(dateRange.start, dateRange.end) as any[];
+        if (Array.isArray(full) && full.length > 0) allTx = full;
+      } catch { /* fallback to current page */ }
+      allTx.forEach(t => {
         rows.push([
           sanitizeCSVCell(t.date),
           sanitizeCSVCell(t.student_name),
@@ -144,6 +175,13 @@ export function Reports() {
 
       {activeTab === 'defaulters' ? (
         <div className="space-y-0">
+          <div className="mb-4 max-w-sm">
+            <Input
+              placeholder="Search defaulters by name or phone..."
+              value={defSearch}
+              onChange={(e) => setDefSearch(e.target.value)}
+            />
+          </div>
           <div className="rounded-md border border-slate-200 bg-white">
             <Table>
               <TableHeader>
@@ -155,7 +193,7 @@ export function Reports() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedDefaulters.map((student) => (
+                {defaulters.map((student) => (
                   <TableRow key={student.id}>
                     <TableCell className="font-medium">{student.name}</TableCell>
                     <TableCell>{student.class_name}</TableCell>
@@ -165,7 +203,7 @@ export function Reports() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {allDefaulters.length === 0 && (
+                {defaulters.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={4} className="h-24 text-center text-primary/70 font-body">
                       No defaulters found.
@@ -177,8 +215,8 @@ export function Reports() {
           </div>
           <Pagination
             currentPage={defPage}
-            totalPages={Math.ceil(allDefaulters.length / DEFAULT_PAGE_SIZE)}
-            totalItems={allDefaulters.length}
+            totalPages={Math.ceil(defTotal / DEFAULT_PAGE_SIZE)}
+            totalItems={defTotal}
             pageSize={DEFAULT_PAGE_SIZE}
             onPageChange={setDefPage}
           />

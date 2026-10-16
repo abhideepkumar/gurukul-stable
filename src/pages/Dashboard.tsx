@@ -7,9 +7,42 @@ import { ErrorSkeleton } from '../components/ui/ErrorSkeleton';
 export function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<Error | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const CACHE_KEY = 'gurukul_dashboard_cache';
+  const CACHE_TTL_MS = 5 * 60 * 1000;
+
+  const load = async (force = false) => {
+    try {
+      if (!force) {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (Date.now() - cached.at < CACHE_TTL_MS) {
+            setData(cached.data);
+            return;
+          }
+        }
+      }
+      setIsRefreshing(true);
+      const fresh = await api.getDashboard();
+      setData(fresh);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), data: fresh }));
+    } catch (e: any) {
+      // Serve stale cache rather than blank page when offline/rate-limited
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw && !data) {
+        try { setData(JSON.parse(raw).data); return; } catch { /* fall through */ }
+      }
+      setError(e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    api.getDashboard().then(setData).catch(setError);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (error) return <ErrorSkeleton error={error} />;
@@ -17,9 +50,18 @@ export function Dashboard() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Dashboard</h2>
-        <p className="text-primary/70 font-body mt-1">Overview of school finances and student dues.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-4xl font-headline font-bold tracking-tight text-primary">Dashboard</h2>
+          <p className="text-primary/70 font-body mt-1">Overview of school finances and student dues.</p>
+        </div>
+        <button
+          onClick={() => load(true)}
+          disabled={isRefreshing}
+          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          {isRefreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

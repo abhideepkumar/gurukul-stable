@@ -1,5 +1,4 @@
 import * as React from "react"
-import { X } from "lucide-react"
 import { cn } from "@/src/lib/utils"
 
 interface DialogProps {
@@ -22,7 +21,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
   )
 }
 
-export function DialogContent({ children, className, onOpenChange }: { children: React.ReactNode, className?: string, onOpenChange?: (open: boolean) => void }) {
+export function DialogContent({ children, className }: { children: React.ReactNode, className?: string }) {
   return (
     <div className={cn("relative z-50 grid w-full max-w-md gap-6 bg-surface p-8 md:p-10 shadow-tint editorial-shadow rounded-[2.5rem]", className)}>
       {children}

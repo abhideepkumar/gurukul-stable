@@ -101,19 +101,24 @@ async function deleteFeeStructure(id: string) {
 async function getStudents(search?: string, classId?: string, page?: number, limit?: number): Promise<any[] | PaginatedResult<any>> {
   const paginated = page !== undefined && limit !== undefined;
 
-  // Use the new student_summary view to avoid N+1 queries
+  // Use the student_summary view to avoid N+1 queries.
+  // Explicit column list (no SELECT *) + hard cap on unpaginated search.
+  const cols = 'id,name,class_id,section,parent_name,phone,email,class_name,pending_amount,current_month_due,overdue_amount';
   let query = supabase
     .from('student_summary')
-    .select('*', paginated ? { count: 'exact' } : {})
+    .select(cols, paginated ? { count: 'exact' } : {})
     .order('name', { ascending: true });
 
   if (search) query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
   if (classId) query = query.eq('class_id', classId);
 
   if (paginated) {
-    const from = (page! - 1) * limit!;
-    const to   = page! * limit! - 1;
+    const safeLimit = Math.min(Math.max(limit!, 1), 100);
+    const from = (page! - 1) * safeLimit;
+    const to   = page! * safeLimit - 1;
     query = query.range(from, to);
+  } else {
+    query = query.limit(20);
   }
 
   const { data, error, count } = await query;
@@ -235,6 +240,7 @@ async function processPayment(payload: {
   comment?: string;
   date: string;
   allocations: PaymentAllocation[];
+  idempotency_key?: string;
 }) {
   // Map allocations into the composite type array Postgres expects
   const allocationsArg = payload.allocations.map(a => ({
@@ -250,6 +256,7 @@ async function processPayment(payload: {
     p_comment:        payload.comment         || null,
     p_date:           payload.date,
     p_allocations:    allocationsArg,
+    p_idempotency_key: payload.idempotency_key || null,
   });
 
   if (error) throw new Error(error.message);
@@ -313,8 +320,9 @@ async function getDashboard() {
   return data;
 }
 
-async function getStudentTransactions(studentId: string) {
-  const { data, error } = await supabase
+async function getStudentTransactions(studentId: string, page?: number, limit?: number): Promise<any[] | PaginatedResult<any>> {
+  const paginated = page !== undefined && limit !== undefined;
+  let query = supabase
     .from('transactions')
     .select(`
       id, amount, payment_method, reference_id, comment, date,
@@ -325,23 +333,45 @@ async function getStudentTransactions(studentId: string) {
           student_fee_assignments(fee_structures(name))
         )
       )
-    `)
+    `, paginated ? { count: 'exact' } : {})
     .eq('student_id', studentId)
     .order('date', { ascending: false });
 
+  if (paginated) {
+    const safeLimit = Math.min(Math.max(limit!, 1), 100);
+    query = query.range((page! - 1) * safeLimit, page! * safeLimit - 1);
+  } else {
+    query = query.limit(50);
+  }
+
+  const { data, error, count } = await query;
+
   if (error) throw new Error(error.message);
   
-  return (data ?? []).map((t: any) => ({
+  const mapped = (data ?? []).map((t: any) => ({
     ...t,
     allocations_details: t.transaction_allocations?.map((alloc: any) => ({
       amount: alloc.amount_applied,
       fee_name: alloc.dues?.student_fee_assignments?.fee_structures?.name || 'Unknown'
     })) || []
   }));
+  return paginated ? { data: mapped, total: count ?? 0 } : mapped;
 }
 
 // ─── Reports ──────────────────────────────────────────────────
-async function getDefaulters() {
+async function getDefaulters(page?: number, limit?: number, search?: string): Promise<any[] | PaginatedResult<any>> {
+  // Server-paginated when page+limit given; legacy full-fetch otherwise
+  if (page !== undefined && limit !== undefined) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const offset = (page - 1) * safeLimit;
+    const { data, error } = await supabase.rpc('get_defaulters_report_paged', {
+      p_limit: safeLimit,
+      p_offset: offset,
+      p_search: search || null,
+    });
+    if (error) throw new Error(error.message);
+    return { data: (data as any)?.data ?? [], total: (data as any)?.total ?? 0 };
+  }
   const { data, error } = await supabase.rpc('get_defaulters_report');
   if (error) throw new Error(error.message);
   return data;
@@ -363,8 +393,9 @@ async function getTransactions(startDate?: string, endDate?: string, page?: numb
   }
 
   if (paginated) {
-    const from = (page! - 1) * limit!;
-    const to   = page! * limit! - 1;
+    const safeLimit = Math.min(Math.max(limit!, 1), 100);
+    const from = (page! - 1) * safeLimit;
+    const to   = page! * safeLimit - 1;
     query = query.range(from, to);
   }
 
@@ -563,6 +594,14 @@ async function evaluateLateFees(studentId: string) {
   return { success: true };
 }
 
+async function getStudentBilling(studentId: string) {
+  const { data, error } = await supabase.rpc('get_student_billing', {
+    p_student_id: studentId,
+  });
+  if (error) throw new Error(error.message);
+  return data as { dues: any[]; transactions: any[] };
+}
+
 async function waiveDue(dueId: string, waivedBy?: string, reason?: string) {
   const { error } = await supabase.rpc('waive_due', {
     p_due_id: dueId,
@@ -622,5 +661,6 @@ export const api = {
   addLateFeeRule,
   deleteLateFeeRule,
   evaluateLateFees,
+  getStudentBilling,
   waiveDue,
 };

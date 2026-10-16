@@ -3,6 +3,11 @@
 -- Complete PostgreSQL Schema (Supabase)
 --
 -- *** CANONICAL SCHEMA — Single Source of Truth ***
+-- CHECKPOINT v1: this ONE file sets up any database (fresh or pre-checkpoint).
+-- It is fully re-runnable (IF NOT EXISTS / OR REPLACE / DROP IF EXISTS guards).
+-- Going forward, each change ships as a NEW versioned file
+-- (supabase/V2__name.sql, V3__name.sql, ...) — never edit this checkpoint
+-- except for critical fix-forward with a new version file instead.
 -- This file includes ALL phases merged together:
 --   Phase 0 (Base): Core tables, RLS, types, RPCs
 --   Phase 1: Discounts system
@@ -103,6 +108,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   reference_id TEXT,
   comment TEXT,
   date DATE NOT NULL,
+  idempotency_key TEXT UNIQUE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -185,7 +191,39 @@ ALTER TABLE late_fee_rules ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
 -- 3. RLS POLICIES (authenticated role only)
+-- Re-runnable: DROP IF EXISTS first so this file can be re-applied
+-- as a checkpoint on databases created before it.
 -- ============================================================
+
+DROP POLICY IF EXISTS "auth can select classes" ON classes;
+DROP POLICY IF EXISTS "auth can insert classes" ON classes;
+DROP POLICY IF EXISTS "auth can delete classes" ON classes;
+DROP POLICY IF EXISTS "auth can select fee_structures" ON fee_structures;
+DROP POLICY IF EXISTS "auth can insert fee_structures" ON fee_structures;
+DROP POLICY IF EXISTS "auth can delete fee_structures" ON fee_structures;
+DROP POLICY IF EXISTS "auth can select class_fee_defaults" ON class_fee_defaults;
+DROP POLICY IF EXISTS "auth can insert class_fee_defaults" ON class_fee_defaults;
+DROP POLICY IF EXISTS "auth can delete class_fee_defaults" ON class_fee_defaults;
+DROP POLICY IF EXISTS "auth can select students" ON students;
+DROP POLICY IF EXISTS "auth can update students" ON students;
+DROP POLICY IF EXISTS "auth can delete students" ON students;
+DROP POLICY IF EXISTS "auth can select student_fee_assignments" ON student_fee_assignments;
+DROP POLICY IF EXISTS "auth can select dues" ON dues;
+DROP POLICY IF EXISTS "auth can select transactions" ON transactions;
+DROP POLICY IF EXISTS "auth can select transaction_allocations" ON transaction_allocations;
+DROP POLICY IF EXISTS "auth can select payment_intents" ON payment_intents;
+DROP POLICY IF EXISTS "auth can select discounts" ON discounts;
+DROP POLICY IF EXISTS "auth can insert discounts" ON discounts;
+DROP POLICY IF EXISTS "auth can update discounts" ON discounts;
+DROP POLICY IF EXISTS "auth can delete discounts" ON discounts;
+DROP POLICY IF EXISTS "auth can select student_discounts" ON student_discounts;
+DROP POLICY IF EXISTS "auth can insert student_discounts" ON student_discounts;
+DROP POLICY IF EXISTS "auth can update student_discounts" ON student_discounts;
+DROP POLICY IF EXISTS "auth can delete student_discounts" ON student_discounts;
+DROP POLICY IF EXISTS "auth can select late_fee_rules" ON late_fee_rules;
+DROP POLICY IF EXISTS "auth can insert late_fee_rules" ON late_fee_rules;
+DROP POLICY IF EXISTS "auth can update late_fee_rules" ON late_fee_rules;
+DROP POLICY IF EXISTS "auth can delete late_fee_rules" ON late_fee_rules;
 
 -- Classes
 CREATE POLICY "auth can select classes" ON classes FOR SELECT TO authenticated USING (true);
@@ -412,7 +450,7 @@ BEGIN
       IF v_net_amount > 0 THEN
         INSERT INTO dues (id, student_id, student_fee_assignment_id, amount, original_amount, discount_amount, discount_details, due_date, due_type)
         VALUES (gen_random_uuid(), v_student_id, v_assignment_id, v_net_amount, v_base_amount, v_discount_total, v_discount_details, v_current_date, 'standard')
-        ON CONFLICT (student_id, student_fee_assignment_id, due_date) DO NOTHING;
+        ON CONFLICT (student_id, student_fee_assignment_id, due_date) WHERE due_type = 'standard' DO NOTHING;
       END IF;
 
       IF rec.frequency = 'monthly' THEN v_current_date := v_current_date + INTERVAL '1 month';
@@ -437,6 +475,10 @@ $$;
 --  4. Returns transaction id and cleared due details
 -- ============================================================
 
+-- Checkpoint cleanup: pre-checkpoint DBs have the old 7-arg overload.
+-- Drop it so only the safe 8-arg version remains. No-op on fresh projects.
+DROP FUNCTION IF EXISTS process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]);
+
 CREATE OR REPLACE FUNCTION process_payment(
   p_student_id     UUID,
   p_amount         NUMERIC,
@@ -444,7 +486,8 @@ CREATE OR REPLACE FUNCTION process_payment(
   p_reference_id   TEXT DEFAULT NULL,
   p_comment        TEXT DEFAULT NULL,
   p_date           DATE DEFAULT CURRENT_DATE,
-  p_allocations    payment_allocation[] DEFAULT '{}'
+  p_allocations    payment_allocation[] DEFAULT '{}',
+  p_idempotency_key TEXT DEFAULT NULL
 )
 RETURNS JSON
 LANGUAGE plpgsql
@@ -461,6 +504,7 @@ DECLARE
   v_new_status      TEXT;
   v_cleared_dues    JSON[] := '{}';
   v_result          JSON;
+  v_existing        JSON;
 BEGIN
   IF p_amount <= 0 THEN
     RAISE EXCEPTION 'Amount must be greater than 0';
@@ -470,12 +514,25 @@ BEGIN
     RAISE EXCEPTION 'No dues selected for payment';
   END IF;
 
-  IF p_payment_method NOT IN ('cash', 'online') THEN
+  IF p_payment_method NOT IN ('cash', 'online', 'razorpay') THEN
     RAISE EXCEPTION 'Invalid payment method: %', p_payment_method;
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM students WHERE id = p_student_id) THEN
     RAISE EXCEPTION 'Student % does not exist', p_student_id;
+  END IF;
+
+  -- Idempotent replay: same key returns the original result, no double-charge
+  IF p_idempotency_key IS NOT NULL THEN
+    SELECT json_build_object('transaction_id', id, 'cleared_dues',
+      COALESCE((SELECT json_agg(json_build_object(
+        'due_id', ta.fee_due_id, 'amount_allocated', ta.amount_applied))
+        FROM transaction_allocations ta WHERE ta.transaction_id = transactions.id), '[]'::json))
+    INTO v_existing
+    FROM transactions WHERE idempotency_key = p_idempotency_key;
+    IF FOUND AND v_existing IS NOT NULL THEN
+      RETURN v_existing;
+    END IF;
   END IF;
 
   -- Sum of allocations must match payment amount
@@ -490,9 +547,24 @@ BEGIN
       v_total_allocated, p_amount;
   END IF;
 
+  -- Lock all target dues up-front so concurrent submits serialize
+  PERFORM 1 FROM dues WHERE id IN (SELECT (a).due_id FROM unnest(p_allocations) AS a) FOR UPDATE;
+
   -- Insert transaction
-  INSERT INTO transactions (id, student_id, amount, payment_method, reference_id, comment, date)
-  VALUES (v_transaction_id, p_student_id, p_amount, p_payment_method, p_reference_id, p_comment, p_date);
+  INSERT INTO transactions (id, student_id, amount, payment_method, reference_id, comment, date, idempotency_key)
+  VALUES (v_transaction_id, p_student_id, p_amount, p_payment_method, p_reference_id, p_comment, p_date, p_idempotency_key)
+  ON CONFLICT (idempotency_key) DO NOTHING;
+
+  -- Lost the race: another request with same key won — return its result
+  IF NOT FOUND AND p_idempotency_key IS NOT NULL THEN
+    SELECT json_build_object('transaction_id', id, 'cleared_dues',
+      COALESCE((SELECT json_agg(json_build_object(
+        'due_id', ta.fee_due_id, 'amount_allocated', ta.amount_applied))
+        FROM transaction_allocations ta WHERE ta.transaction_id = transactions.id), '[]'::json))
+    INTO v_existing
+    FROM transactions WHERE idempotency_key = p_idempotency_key;
+    RETURN v_existing;
+  END IF;
 
   -- Process each allocation
   FOREACH v_alloc IN ARRAY p_allocations LOOP
@@ -674,6 +746,7 @@ DECLARE
   v_days_overdue  INTEGER;
   v_penalty       NUMERIC;
   v_existing_id   UUID;
+  v_existing_waived BOOLEAN;
   v_student_class UUID;
 BEGIN
   SELECT class_id INTO v_student_class FROM students WHERE id = p_student_id;
@@ -733,13 +806,16 @@ BEGIN
     v_penalty := ROUND(v_penalty, 2);
     IF v_penalty <= 0 THEN CONTINUE; END IF;
 
-    -- Check for existing late fee due
-    SELECT id INTO v_existing_id
+    -- Check for existing late fee due (including waived ones —
+    -- a waived fine must never be recreated on next visit)
+    SELECT id, is_waived INTO v_existing_id, v_existing_waived
     FROM dues
-    WHERE parent_due_id = v_due.id AND due_type = 'late_fee' AND is_waived = false
+    WHERE parent_due_id = v_due.id AND due_type = 'late_fee'
+    ORDER BY is_waived ASC, created_at DESC
     LIMIT 1;
 
     IF v_existing_id IS NOT NULL THEN
+      IF v_existing_waived THEN CONTINUE; END IF;
       IF v_rule.penalty_type = 'fixed_once' THEN CONTINUE; END IF;
       UPDATE dues SET amount = v_penalty, original_amount = v_penalty
       WHERE id = v_existing_id AND status != 'paid';
@@ -789,13 +865,81 @@ BEGIN
   END IF;
 END;
 $$;
+
+
+-- ============================================================
+-- 11b. RPC: get_student_billing (Phase 6)
+-- Collapses Payments student-select waterfall (evaluate + dues +
+-- recent history) from 3 round-trips into 1. Respects the
+-- last_late_fee_eval daily guard inside evaluate_student_late_fees.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_student_billing(p_student_id UUID)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_dues JSON;
+  v_txns JSON;
+BEGIN
+  PERFORM evaluate_student_late_fees(p_student_id);
+
+  SELECT COALESCE(json_agg(t), '[]'::json) INTO v_dues FROM (
+    SELECT d.id, d.amount, d.paid_amount, d.due_date, d.status,
+           d.original_amount, COALESCE(d.discount_amount,0) AS discount_amount,
+           COALESCE(d.discount_details,'[]'::jsonb) AS discount_details,
+           COALESCE(d.due_type,'standard') AS due_type,
+           d.parent_due_id, COALESCE(d.is_waived,false) AS is_waived,
+           d.waived_reason, fs.name AS fee_name
+    FROM dues d
+    JOIN student_fee_assignments sfa ON d.student_fee_assignment_id = sfa.id
+    JOIN fee_structures fs ON sfa.fee_structure_id = fs.id
+    WHERE d.student_id = p_student_id
+    ORDER BY d.due_date ASC
+    LIMIT 200
+  ) t;
+
+  SELECT COALESCE(json_agg(t), '[]'::json) INTO v_txns FROM (
+    SELECT tr.id, tr.amount, tr.payment_method, tr.reference_id, tr.comment, tr.date,
+      COALESCE((SELECT json_agg(json_build_object(
+        'amount', ta.amount_applied,
+        'fee_name', COALESCE(fs2.name,'Unknown')))
+        FROM transaction_allocations ta
+        LEFT JOIN dues d2 ON ta.fee_due_id = d2.id
+        LEFT JOIN student_fee_assignments sfa2 ON d2.student_fee_assignment_id = sfa2.id
+        LEFT JOIN fee_structures fs2 ON sfa2.fee_structure_id = fs2.id
+        WHERE ta.transaction_id = tr.id), '[]'::json) AS allocations_details
+    FROM transactions tr
+    WHERE tr.student_id = p_student_id
+    ORDER BY tr.date DESC
+    LIMIT 50
+  ) t;
+
+  RETURN json_build_object('dues', v_dues, 'transactions', v_txns);
+END;
+$$;
 -- ============================================================
 -- 11. [MOVED TO END OF FILE]
 -- ============================================================
 
+-- Checkpoint backfill: databases created before this file lack the column
+-- (CREATE TABLE IF NOT EXISTS won't add it). No-op on fresh projects.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS idempotency_key TEXT UNIQUE;
+
+
 -- ============================================================
 -- 12. PERFORMANCE INDEXES (Phase 3)
 -- ============================================================
+
+-- Checkpoint fix: late_fee dues share their parent's
+-- (student_id, student_fee_assignment_id, due_date) triple, so the original
+-- table-wide UNIQUE made their INSERT always fail (no late fees ever generated).
+-- Scope uniqueness to standard dues only.
+ALTER TABLE dues DROP CONSTRAINT IF EXISTS dues_student_id_student_fee_assignment_id_due_date_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dues_standard_triple
+  ON dues(student_id, student_fee_assignment_id, due_date) WHERE due_type = 'standard';
 
 CREATE INDEX IF NOT EXISTS idx_dues_student_id        ON dues(student_id);
 CREATE INDEX IF NOT EXISTS idx_dues_status            ON dues(status) WHERE status != 'paid';
@@ -805,6 +949,15 @@ CREATE INDEX IF NOT EXISTS idx_transactions_student_id ON transactions(student_i
 CREATE INDEX IF NOT EXISTS idx_transactions_date       ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_student_discounts_student_id ON student_discounts(student_id);
 CREATE INDEX IF NOT EXISTS idx_sfa_student_id         ON student_fee_assignments(student_id);
+-- Phase 5/6: FK + filter + idempotency indexes
+CREATE INDEX IF NOT EXISTS idx_dues_parent            ON dues(parent_due_id) WHERE due_type = 'late_fee';
+CREATE INDEX IF NOT EXISTS idx_alloc_txn              ON transaction_allocations(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_alloc_due              ON transaction_allocations(fee_due_id);
+CREATE INDEX IF NOT EXISTS idx_students_class        ON students(class_id);
+CREATE INDEX IF NOT EXISTS idx_sfa_fee                ON student_fee_assignments(fee_structure_id);
+CREATE INDEX IF NOT EXISTS idx_lfr_scope              ON late_fee_rules(fee_structure_id, class_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_fee_name_lower        ON fee_structures(lower(name));
+CREATE INDEX IF NOT EXISTS idx_txn_idem               ON transactions(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 
 -- ============================================================
@@ -953,6 +1106,129 @@ $$;
 
 
 -- ============================================================
+-- 16a. RPC: get_defaulters_report_paged (Phase 5)
+-- Server-side pagination + search + limit clamp (max 100).
+-- Returns JSON {data, total} to avoid shipping all rows.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_defaulters_report_paged(
+  p_limit INT DEFAULT 20,
+  p_offset INT DEFAULT 0,
+  p_search TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_limit INT := LEAST(GREATEST(COALESCE(p_limit, 20), 1), 100);
+  v_offset INT := GREATEST(COALESCE(p_offset, 0), 0);
+  v_total INT;
+  v_data JSON;
+BEGIN
+  SELECT COUNT(*) INTO v_total FROM (
+    SELECT s.id
+    FROM dues d
+    JOIN students s ON d.student_id = s.id
+    JOIN classes c ON s.class_id = c.id
+    WHERE d.due_date < date_trunc('month', CURRENT_DATE)
+      AND d.status != 'paid'
+      AND (p_search IS NULL OR p_search = ''
+        OR s.name ILIKE '%' || p_search || '%'
+        OR COALESCE(s.phone,'') ILIKE '%' || p_search || '%')
+    GROUP BY s.id
+    HAVING SUM(d.amount - d.paid_amount) > 0
+  ) t;
+
+  SELECT COALESCE(json_agg(t), '[]'::json) INTO v_data FROM (
+    SELECT s.id, s.name, COALESCE(s.phone,'') AS phone,
+           c.name AS class_name,
+           SUM(d.amount - d.paid_amount) AS pending_amount
+    FROM dues d
+    JOIN students s ON d.student_id = s.id
+    JOIN classes c ON s.class_id = c.id
+    WHERE d.due_date < date_trunc('month', CURRENT_DATE)
+      AND d.status != 'paid'
+      AND (p_search IS NULL OR p_search = ''
+        OR s.name ILIKE '%' || p_search || '%'
+        OR COALESCE(s.phone,'') ILIKE '%' || p_search || '%')
+    GROUP BY s.id, s.name, s.phone, c.name
+    HAVING SUM(d.amount - d.paid_amount) > 0
+    ORDER BY pending_amount DESC
+    LIMIT v_limit OFFSET v_offset
+  ) t;
+
+  RETURN json_build_object('data', v_data, 'total', v_total);
+END;
+$$;
+
+
+-- ============================================================
+-- 16b. RPC: add_custom_due (Custom Bills & Old Dues)
+-- Merged from billing_enhancements.sql so fresh installs work.
+-- Finds-or-creates fee_structure + assignment, then inserts due.
+-- NOTE: ON CONFLICT sums amounts (not idempotent) — callers must
+-- pass unique title+date. Cash/online payments use idempotency keys.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION add_custom_due(
+  p_student_id UUID,
+  p_amount NUMERIC,
+  p_title TEXT,
+  p_due_date DATE,
+  p_description TEXT DEFAULT NULL
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_fee_structure_id UUID;
+  v_assignment_id UUID;
+  v_due_id UUID;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM students WHERE id = p_student_id) THEN
+    RAISE EXCEPTION 'Student % does not exist', p_student_id;
+  END IF;
+
+  SELECT id INTO v_fee_structure_id
+  FROM fee_structures
+  WHERE lower(name) = lower(p_title)
+  LIMIT 1;
+
+  IF v_fee_structure_id IS NULL THEN
+    v_fee_structure_id := gen_random_uuid();
+    INSERT INTO fee_structures (id, name, amount, frequency, fee_category, is_optional, applies_late_fee)
+    VALUES (v_fee_structure_id, p_title, p_amount, 'one_time', 'other', true, false);
+  END IF;
+
+  SELECT id INTO v_assignment_id
+  FROM student_fee_assignments
+  WHERE student_id = p_student_id AND fee_structure_id = v_fee_structure_id
+  LIMIT 1;
+
+  IF v_assignment_id IS NULL THEN
+    v_assignment_id := gen_random_uuid();
+    INSERT INTO student_fee_assignments (id, student_id, fee_structure_id, start_date, end_date)
+    VALUES (v_assignment_id, p_student_id, v_fee_structure_id, p_due_date, p_due_date);
+  END IF;
+
+  INSERT INTO dues (id, student_id, student_fee_assignment_id, amount, original_amount, due_date, due_type)
+  VALUES (gen_random_uuid(), p_student_id, v_assignment_id, p_amount, p_amount, p_due_date, 'standard')
+  ON CONFLICT (student_id, student_fee_assignment_id, due_date) WHERE due_type = 'standard'
+  DO UPDATE SET
+    amount = dues.amount + EXCLUDED.amount,
+    original_amount = dues.original_amount + EXCLUDED.original_amount
+  RETURNING id INTO v_due_id;
+
+  RETURN v_due_id;
+END;
+$$;
+
+
+-- ============================================================
 -- 17. RPC: bulk_import_students (Phase 3)
 -- Processes an entire CSV import in a single DB transaction.
 -- Replaces N serial HTTP calls from the frontend (one per row).
@@ -1036,9 +1312,9 @@ REVOKE EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT,
 REVOKE EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT, TEXT, TEXT) FROM anon;
 GRANT  EXECUTE ON FUNCTION add_student_with_dues(TEXT, UUID, UUID[], TEXT, TEXT, TEXT, TEXT) TO authenticated;
 
-REVOKE EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) FROM anon;
-GRANT  EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[]) TO authenticated;
+REVOKE EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[], TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[], TEXT) FROM anon;
+GRANT  EXECUTE ON FUNCTION process_payment(UUID, NUMERIC, TEXT, TEXT, TEXT, DATE, payment_allocation[], TEXT) TO authenticated;
 
 REVOKE EXECUTE ON FUNCTION recalculate_student_dues(UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION recalculate_student_dues(UUID) FROM anon;
@@ -1051,6 +1327,10 @@ GRANT  EXECUTE ON FUNCTION evaluate_student_late_fees(UUID) TO authenticated;
 REVOKE EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) FROM anon;
 GRANT  EXECUTE ON FUNCTION waive_due(UUID, TEXT, TEXT) TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION get_student_billing(UUID) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_student_billing(UUID) FROM anon;
+GRANT  EXECUTE ON FUNCTION get_student_billing(UUID) TO authenticated;
 
 -- Phase 3 RPCs
 REVOKE EXECUTE ON FUNCTION calculate_discount_for_fee(UUID, UUID, NUMERIC, DATE) FROM PUBLIC;
@@ -1065,7 +1345,15 @@ REVOKE EXECUTE ON FUNCTION get_defaulters_report() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION get_defaulters_report() FROM anon;
 GRANT  EXECUTE ON FUNCTION get_defaulters_report() TO authenticated;
 
+REVOKE EXECUTE ON FUNCTION get_defaulters_report_paged(INT, INT, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_defaulters_report_paged(INT, INT, TEXT) FROM anon;
+GRANT  EXECUTE ON FUNCTION get_defaulters_report_paged(INT, INT, TEXT) TO authenticated;
+
 REVOKE EXECUTE ON FUNCTION bulk_import_students(JSONB) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION bulk_import_students(JSONB) FROM anon;
 GRANT  EXECUTE ON FUNCTION bulk_import_students(JSONB) TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION add_custom_due(UUID, NUMERIC, TEXT, DATE, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION add_custom_due(UUID, NUMERIC, TEXT, DATE, TEXT) FROM anon;
+GRANT  EXECUTE ON FUNCTION add_custom_due(UUID, NUMERIC, TEXT, DATE, TEXT) TO authenticated;
 

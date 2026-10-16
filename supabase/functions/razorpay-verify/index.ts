@@ -170,6 +170,8 @@ serve(async (req) => {
       p_comment: `Razorpay Online Payment (${razorpay_order_id})`,
       p_date: new Date().toISOString().split("T")[0],
       p_allocations: allocations,
+      // Idempotent retry: same payment_id never creates a 2nd transaction
+      p_idempotency_key: razorpay_payment_id,
     };
 
     const { data: rpcData, error: rpcError } = await supabase.rpc(

@@ -71,11 +71,18 @@ export function Students() {
 
   useEffect(() => {
     loadStudents();
-  }, [debouncedSearch, classId, page]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
-  // Reset to page 1 when filters change
+  // Single-fetch on filter change: if already on page 1 fetch directly,
+  // else reset to 1 and let the page effect fetch once
   useEffect(() => {
-    setPage(1);
+    if (page === 1) {
+      loadStudents();
+    } else {
+      setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, classId]);
 
   const handleAdd = async (e: React.FormEvent) => {

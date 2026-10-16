@@ -1,5 +1,6 @@
 import React, { ReactNode } from 'react';
 import { ErrorSkeleton } from './ui/ErrorSkeleton';
+import { logger } from '../lib/logger';
 
 interface Props {
   children?: ReactNode;
@@ -25,7 +26,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('Uncaught error:', error, errorInfo);
+    logger.error('Uncaught error', error, { componentStack: errorInfo.componentStack?.slice(0, 500) });
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
     }

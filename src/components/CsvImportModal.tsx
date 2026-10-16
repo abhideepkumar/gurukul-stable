@@ -4,7 +4,6 @@ import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { api } from '@/src/lib/api';
 import { Download, Upload, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
-import { format } from 'date-fns';
 
 interface CsvImportModalProps {
   open: boolean;
@@ -45,7 +44,6 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
   const [classesMap, setClassesMap] = useState<Record<string, string>>({});
   
   const [parsedData, setParsedData] = useState<any[]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   
   const [progress, setProgress] = useState({ current: 0, total: 0, failed: 0 });
@@ -116,7 +114,6 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
       }
 
       const h = rows[0].map(h => h.trim());
-      setHeaders(h);
       
       const dataRows = rows.slice(1);
       let errors: string[] = [];
@@ -152,7 +149,7 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
     e.target.value = '';
   };
 
-  // 4. Orchestrate Import in one Bulk API call
+  // 4. Chunked import: 50 rows/RPC to avoid long DB transactions + timeouts
   const handleStartImport = async () => {
     if (validationErrors.length > 0) return;
     
@@ -161,22 +158,36 @@ export function CsvImportModal({ open, onOpenChange, onSuccess }: CsvImportModal
     setProgress({ current: 0, total: parsedData.length, failed: 0 });
     setImportErrors([]);
 
+    const CHUNK = 50;
+    let done = 0;
+    let failed = 0;
+    const allErrors: Array<{name: string, error: string}> = [];
+
     try {
-      const response = await api.bulkImportStudents(parsedData);
-      
-      const importedCount = response?.imported?.length || 0;
-      const failedItems: Array<{name: string, error: string}> = response?.errors || [];
-      const failedCount = failedItems.length;
-
-      setProgress({
-        current: importedCount + failedCount,
-        total: parsedData.length,
-        failed: failedCount
-      });
-
-      if (failedCount > 0) {
-        setImportErrors(failedItems);
+      for (let i = 0; i < parsedData.length; i += CHUNK) {
+        const chunk = parsedData.slice(i, i + CHUNK);
+        try {
+          const response = await api.bulkImportStudents(chunk);
+          const ok = response?.imported?.length || 0;
+          const errs: Array<{name: string, error: string}> = response?.errors || [];
+          done += ok + errs.length;
+          failed += errs.length;
+          allErrors.push(...errs);
+        } catch (err: any) {
+          console.error(`Chunk ${i / CHUNK + 1} failed:`, err);
+          failed += chunk.length;
+          done += chunk.length;
+          allErrors.push({ name: `Rows ${i + 1}-${i + chunk.length}`, error: err.message || 'Chunk failed' });
+        }
+        setProgress({ current: done, total: parsedData.length, failed });
+        // Abort early if >10% rows failing — likely systemic (wrong class names)
+        if (done >= 100 && failed / done > 0.1 && done < parsedData.length) {
+          allErrors.push({ name: 'Aborted', error: `Stopping early: ${failed}/${done} failed (>10%). Fix classes and retry remaining rows.` });
+          break;
+        }
       }
+
+      if (allErrors.length > 0) setImportErrors(allErrors);
     } catch (err: any) {
       console.error(`Bulk import failed:`, err);
       setProgress(prev => ({ ...prev, failed: prev.total }));
