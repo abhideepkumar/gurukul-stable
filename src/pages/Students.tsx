@@ -20,11 +20,18 @@ export function Students() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
+  const [formData, setFormData] = useState({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '', admission_no: '' });
   const [selectedFeeStructures, setSelectedFeeStructures] = useState<string[]>([]);
   const [error, setError] = useState<Error | null>(null);
   const [page, setPage] = useState(1);
   const [totalStudents, setTotalStudents] = useState(0);
+
+  // Family / siblings management
+  const [isSiblingOpen, setIsSiblingOpen] = useState(false);
+  const [siblingStudent, setSiblingStudent] = useState<any>(null);
+  const [siblingList, setSiblingList] = useState<any[]>([]);
+  const [siblingSearch, setSiblingSearch] = useState('');
+  const [siblingResults, setSiblingResults] = useState<any[]>([]);
 
   // Discount management for a student
   const [isDiscountOpen, setIsDiscountOpen] = useState(false);
@@ -88,17 +95,27 @@ export function Students() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // Soft duplicate warning — similar name in same class, or same phone
+      try {
+        const dup = await api.checkStudentDuplicate(formData.name, formData.class_id || undefined, formData.phone || undefined);
+        if (dup.similar && dup.similar.length > 0) {
+          const names = dup.similar.map((s: any) => `${s.name} (${s.class_name})`).join(', ');
+          if (!confirm(`Possible duplicate: ${names} already exists. Add ${formData.name} anyway?`)) return;
+        }
+      } catch (dupErr) {
+        console.warn('Duplicate check failed', dupErr);
+      }
       await api.addStudent({
         ...formData,
         fee_structure_ids: selectedFeeStructures,
       });
       setIsAddOpen(false);
-      setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
+      setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '', admission_no: '' });
       setSelectedFeeStructures([]);
       loadStudents();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to add student');
+      alert(err.message || 'Failed to add student');
     }
   };
 
@@ -109,7 +126,8 @@ export function Students() {
       section: student.section || '',
       parent_name: student.parent_name || '',
       phone: student.phone || '',
-      email: student.email || ''
+      email: student.email || '',
+      admission_no: student.admission_no || ''
     });
     setEditingStudentId(student.id);
     setIsEditOpen(true);
@@ -122,11 +140,11 @@ export function Students() {
       await api.updateStudent(editingStudentId, formData);
       setIsEditOpen(false);
       setEditingStudentId(null);
-      setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
+      setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '', admission_no: '' });
       loadStudents();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to update student');
+      alert(err.message || 'Failed to update student');
     }
   };
 
@@ -191,6 +209,63 @@ export function Students() {
     }
   };
 
+  // ── Family / siblings ───────────────────────────────────────
+  const openSiblingDialog = async (student: any) => {
+    setSiblingStudent(student);
+    setIsSiblingOpen(true);
+    setSiblingSearch('');
+    setSiblingResults([]);
+    try {
+      setSiblingList(await api.getSiblings(student.id));
+    } catch (err) {
+      console.error(err);
+      setSiblingList([]);
+    }
+  };
+
+  const siblingDebouncedSearch = useDebounce(siblingSearch, 300);
+
+  useEffect(() => {
+    if (isSiblingOpen && siblingDebouncedSearch.trim().length > 1) {
+      api.searchStudents(siblingDebouncedSearch)
+        .then(res => {
+          setSiblingResults(res.filter(r =>
+            r.id !== siblingStudent?.id && !siblingList.some((l: any) => l.id === r.id)
+          ));
+        })
+        .catch(console.error);
+    } else {
+      setSiblingResults([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siblingDebouncedSearch, isSiblingOpen]);
+
+  const handleLinkSibling = async (candidate: any) => {
+    if (!siblingStudent) return;
+    try {
+      await api.linkSiblings(
+        [siblingStudent.id, candidate.id],
+        siblingStudent.parent_name || undefined,
+        siblingStudent.phone || undefined,
+      );
+      setSiblingList(await api.getSiblings(siblingStudent.id));
+      setSiblingSearch('');
+      setSiblingResults([]);
+    } catch (err: any) {
+      alert(err.message || 'Failed to link sibling');
+    }
+  };
+
+  const handleUnlinkSibling = async (sibId: string) => {
+    if (!confirm('Unlink this sibling from the family?')) return;
+    try {
+      await api.unlinkSibling(sibId);
+      if (siblingStudent) setSiblingList(await api.getSiblings(siblingStudent.id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to unlink sibling');
+    }
+  };
+
   if (error) return <ErrorSkeleton error={error} />;
 
   return (
@@ -206,7 +281,7 @@ export function Students() {
           </Button>
           <Button onClick={() => {
             setIsAddOpen(true);
-            setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '' });
+            setFormData({ name: '', class_id: '', section: '', parent_name: '', phone: '', email: '', admission_no: '' });
             setSelectedFeeStructures([]);
           }} className="gap-2">
             <span className="material-symbols-outlined text-[18px]">add</span> Add Student
@@ -218,7 +293,7 @@ export function Students() {
         <div className="relative flex-1 max-w-sm">
           <span className="material-symbols-outlined text-[18px]">search</span>
           <Input
-            placeholder="Search by name or phone..."
+            placeholder="Name, parent, phone, admission no..."
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -241,18 +316,25 @@ export function Students() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Parent</TableHead>
               <TableHead>Class</TableHead>
               <TableHead>Phone</TableHead>
               <TableHead className="text-right">Overdue</TableHead>
               <TableHead className="text-right">Current Month</TableHead>
               <TableHead className="text-right">Pending Amount</TableHead>
-              <TableHead className="w-[100px]"></TableHead>
+              <TableHead className="w-[130px]"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {students.map((student) => (
               <TableRow key={student.id}>
-                <TableCell className="font-medium">{student.name}</TableCell>
+                <TableCell className="font-medium">
+                  {student.name}
+                  {student.admission_no && (
+                    <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">#{student.admission_no}</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-primary/70 font-body">{student.parent_name || '-'}</TableCell>
                 <TableCell>{student.class_name} {student.section && `-${student.section}`}</TableCell>
                 <TableCell>{student.phone}</TableCell>
                 <TableCell className="text-right font-medium text-red-600">
@@ -266,6 +348,9 @@ export function Students() {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-2">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-emerald-600" title="Link Siblings" onClick={() => openSiblingDialog(student)}>
+                      <span className="material-symbols-outlined text-[18px]">group_add</span>
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-primary/70 font-body hover:text-amber-600" title="Manage Discounts" onClick={() => openDiscountDialog(student)}>
                       <span className="material-symbols-outlined text-[18px]">sell</span>
                     </Button>
@@ -281,7 +366,7 @@ export function Students() {
             ))}
             {students.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-primary/70 font-body">
+                <TableCell colSpan={8} className="h-24 text-center text-primary/70 font-body">
                   No students found.
                 </TableCell>
               </TableRow>
@@ -305,9 +390,15 @@ export function Students() {
           </DialogHeader>
           <form onSubmit={handleAdd} className="space-y-4">
             <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input id="name" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input id="name" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="admission_no">Admission No</Label>
+                  <Input id="admission_no" placeholder="e.g. 1042" value={formData.admission_no} onChange={e => setFormData({...formData, admission_no: e.target.value})} />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
@@ -389,9 +480,15 @@ export function Students() {
           </DialogHeader>
           <form onSubmit={handleEditSubmit} className="space-y-4">
             <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="edit_name">Full Name</Label>
-                <Input id="edit_name" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit_name">Full Name</Label>
+                  <Input id="edit_name" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit_admission_no">Admission No</Label>
+                  <Input id="edit_admission_no" placeholder="e.g. 1042" value={formData.admission_no} onChange={e => setFormData({...formData, admission_no: e.target.value})} />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
@@ -525,6 +622,88 @@ export function Students() {
                   <span className="material-symbols-outlined text-[18px]">add</span> Assign Discount
                 </Button>
               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Siblings / Family Dialog */}
+      <Dialog open={isSiblingOpen} onOpenChange={setIsSiblingOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Family / Siblings — {siblingStudent?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5">
+            <div>
+              <h4 className="text-sm font-semibold text-primary/90 mb-2">Current Family</h4>
+              {siblingList.length === 0 ? (
+                <p className="text-sm text-primary/70 font-body bg-slate-50 rounded-md p-3">
+                  No siblings linked yet. Search below to link one.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {siblingList.map((sib: any) => (
+                    <div key={sib.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white p-3">
+                      <div>
+                        <p className="text-sm font-medium text-primary">
+                          {sib.name}
+                          {sib.admission_no && (
+                            <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">#{sib.admission_no}</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-primary/70 font-body">
+                          {sib.class_name} {sib.section && `-${sib.section}`} · Pending ₹{Number(sib.pending_amount ?? 0).toLocaleString()}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-slate-400 hover:text-red-500"
+                        title="Unlink sibling"
+                        onClick={() => handleUnlinkSibling(sib.id)}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">link_off</span>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-semibold text-primary/90 mb-2">Link a Sibling</h4>
+              <Input
+                placeholder="Search by name, parent, phone, admission no..."
+                value={siblingSearch}
+                onChange={(e) => setSiblingSearch(e.target.value)}
+              />
+              {siblingResults.length > 0 && (
+                <div className="mt-2 max-h-56 overflow-y-auto rounded-md border border-slate-200">
+                  {siblingResults.map((r: any) => (
+                    <div key={r.id} className="flex items-center justify-between border-b border-slate-100 p-3 last:border-0">
+                      <div>
+                        <p className="text-sm font-medium text-primary">{r.name}</p>
+                        <p className="text-xs text-primary/70 font-body">
+                          {r.parent_name && <span>{r.parent_name} · </span>}
+                          {r.class_name} {r.section && `-${r.section}`}
+                          {r.phone && ` · ${r.phone}`}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => handleLinkSibling(r)}
+                      >
+                        Link
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-slate-400">
+                Linking never merges fee records — siblings keep their own dues, discounts and late fees; payments can settle both at once on one receipt.
+              </p>
             </div>
           </div>
         </DialogContent>

@@ -103,13 +103,21 @@ async function getStudents(search?: string, classId?: string, page?: number, lim
 
   // Use the student_summary view to avoid N+1 queries.
   // Explicit column list (no SELECT *) + hard cap on unpaginated search.
-  const cols = 'id,name,class_id,section,parent_name,phone,email,class_name,pending_amount,current_month_due,overdue_amount';
+  const cols = 'id,name,class_id,section,parent_name,phone,email,admission_no,class_name,pending_amount,current_month_due,overdue_amount';
   let query = supabase
     .from('student_summary')
     .select(cols, paginated ? { count: 'exact' } : {})
     .order('name', { ascending: true });
 
-  if (search) query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
+  if (search) {
+    // Strip characters that would break PostgREST .or() filter syntax
+    const safe = search.replace(/[,()]/g, ' ').trim();
+    if (safe) {
+      query = query.or(
+        `name.ilike.%${safe}%,phone.ilike.%${safe}%,parent_name.ilike.%${safe}%,admission_no.ilike.%${safe}%`
+      );
+    }
+  }
   if (classId) query = query.eq('class_id', classId);
 
   if (paginated) {
@@ -130,6 +138,7 @@ async function getStudents(search?: string, classId?: string, page?: number, lim
 async function addStudent(payload: {
   name: string; class_id: string; section?: string;
   parent_name?: string; phone?: string; email?: string;
+  admission_no?: string;
   fee_structure_ids?: string[];
 }) {
   // Uses SECURITY DEFINER RPC — cannot INSERT directly to students
@@ -141,6 +150,7 @@ async function addStudent(payload: {
     p_parent_name:       payload.parent_name || null,
     p_phone:             payload.phone       || null,
     p_email:             payload.email       || null,
+    p_admission_no:      payload.admission_no || null,
   });
   return throwOnError(data, error);
 }
@@ -148,6 +158,7 @@ async function addStudent(payload: {
 async function updateStudent(id: string, payload: {
   name: string; class_id: string; section?: string;
   parent_name?: string; phone?: string; email?: string;
+  admission_no?: string;
 }) {
   const { error } = await supabase
     .from('students')
@@ -158,6 +169,7 @@ async function updateStudent(id: string, payload: {
       parent_name: payload.parent_name || null,
       phone:       payload.phone       || null,
       email:       payload.email       || null,
+      admission_no: payload.admission_no?.trim() || null,
     })
     .eq('id', id);
   if (error) throw new Error(error.message);
@@ -310,7 +322,99 @@ async function verifyRazorpayPayment(payload: {
     success: boolean;
     transaction_id: string;
     cleared_dues: any[];
+    receipt_no?: string | null;
   };
+}
+
+// ─── Search ───────────────────────────────────────────────────
+// Ranked server-side search: name / phone / parent_name / admission_no + fuzzy.
+// Returns rows with a `matched_on` label so the UI can show why a row matched.
+async function searchStudents(query: string, limit = 20): Promise<any[]> {
+  if (!query || query.trim().length < 2) return [];
+  const { data, error } = await supabase.rpc('search_students', {
+    p_query: query.trim(),
+    p_limit: limit,
+  });
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+async function checkStudentDuplicate(name: string, classId?: string, phone?: string, excludeId?: string) {
+  const { data, error } = await supabase.rpc('check_student_duplicate', {
+    p_name: name,
+    p_class_id: classId || null,
+    p_phone: phone || null,
+    p_exclude: excludeId || null,
+  });
+  if (error) throw new Error(error.message);
+  return data as { admission_no_taken: boolean; similar: any[] };
+}
+
+// ─── Families (siblings) ──────────────────────────────────────
+async function linkSiblings(studentIds: string[], name?: string, phone?: string) {
+  const { data, error } = await supabase.rpc('link_siblings', {
+    p_student_ids: studentIds,
+    p_name: name || null,
+    p_phone: phone || null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string; // family_id
+}
+
+async function unlinkSibling(studentId: string) {
+  const { error } = await supabase.rpc('unlink_sibling', { p_student_id: studentId });
+  if (error) throw new Error(error.message);
+  return { success: true };
+}
+
+async function getSiblings(studentId: string): Promise<any[]> {
+  const { data, error } = await supabase.rpc('get_siblings', { p_student_id: studentId });
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+// ─── Family payment (atomic, receipt-numbered) ────────────────
+async function processFamilyPayment(payload: {
+  payments: { student_id: string; amount: number; allocations: PaymentAllocation[] }[];
+  payment_method: string;
+  reference_id?: string;
+  comment?: string;
+  date: string;
+  collected_by?: string | null;
+  idempotency_key?: string;
+}) {
+  const { data, error } = await supabase.rpc('process_family_payment', {
+    p_payments: payload.payments.map(p => ({
+      student_id: p.student_id,
+      amount: p.amount,
+      allocations: p.allocations.map(a => ({ due_id: a.due_id, amount_allocated: a.amount_allocated })),
+    })),
+    p_payment_method: payload.payment_method,
+    p_reference_id: payload.reference_id || null,
+    p_comment: payload.comment || null,
+    p_date: payload.date,
+    p_collected_by: payload.collected_by || null,
+    p_idempotency_key: payload.idempotency_key || null,
+  });
+  if (error) throw new Error(error.message);
+  return data as {
+    receipt_id: string;
+    receipt_no: string;
+    amount: number;
+    transaction_ids: string[];
+    cleared_dues: any[];
+  };
+}
+
+// ─── Per-student fee amount override ──────────────────────────
+async function setAssignmentCustomAmount(studentId: string, feeStructureId: string, amount: number | null) {
+  const { data, error } = await supabase.rpc('set_assignment_custom_amount', {
+    p_student_id: studentId,
+    p_fee_structure_id: feeStructureId,
+    p_amount: amount,
+  });
+  if (error) throw new Error(error.message);
+  return data as number; // count of repriced unpaid dues
 }
 
 // ─── Dashboard ────────────────────────────────────────────────
@@ -634,10 +738,21 @@ export const api = {
   bulkImportStudents,
   getStudentDues,
 
+  // Search
+  searchStudents,
+  checkStudentDuplicate,
+
+  // Families (siblings)
+  linkSiblings,
+  unlinkSibling,
+  getSiblings,
+
   // Payments
   addCustomDue,
   getStudentTransactions,
   processPayment,
+  processFamilyPayment,
+  setAssignmentCustomAmount,
   createRazorpayOrder,
   verifyRazorpayPayment,
 

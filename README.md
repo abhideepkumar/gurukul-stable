@@ -150,12 +150,28 @@ the single checkpoint file. It is re-runnable on older databases too.
 #### Fresh Project (Recommended)
 
 ```
-1. supabase/schema.sql          ← Run this ONLY (CHECKPOINT v1 — everything merged)
+1. supabase/schema.sql          ← CHECKPOINT v1 — run FIRST
+2. supabase/V2__search.sql      ← add if not applied yet
+3. supabase/V3__families_receipts.sql
+4. supabase/V4__custom_amount.sql
+5. supabase/V5__admission_receipt_finalize.sql
 ```
 
-The file is re-runnable: safe to re-apply on a database created before this
-checkpoint (backfills `idempotency_key`, drops the old 7-arg `process_payment`).
-Future changes will ship as new versioned files (`V2__*.sql`, `V3__*.sql`, …).
+**Order matters.** Run in the sequence above; each versioned file is
+re-runnable (idempotent) and additive. Re-running `schema.sql` alone after
+applying V-files is safe for data, but it **restores v1 function bodies** —
+so if you ever re-run the checkpoint, re-run all V-files in order afterwards.
+
+| File | Adds |
+|---|---|
+| `V2__search.sql` | `students.admission_no` + `phone_normalized` (+ trigger/backfill), trigram indexes, `search_students()` ranked RPC, `check_student_duplicate()`, partial unpaid-dues index |
+| `V3__families_receipts.sql` | `families` + `students.family_id`, `link_siblings`/`unlink_sibling`/`get_siblings`, `receipts` + `receipt_counters` + `next_receipt_number()` (AY-scoped `RCPT-2026-27-0001`), `transactions.receipt_id`, `process_family_payment()` (atomic N-child counter payment) |
+| `V4__custom_amount.sql` | `set_assignment_custom_amount()` (per-student fee override, reprices unpaid dues only), `add_student_with_dues` honors `custom_amount` |
+| `V5__admission_receipt_finalize.sql` | Unique `students.admission_no` (partial index), `add_student_with_dues` + `p_admission_no` (old 7-arg signature dropped — must run after V4), `finalize_transaction_receipt()` (attaches receipt numbers to Razorpay transactions; service-role only), `student_summary` view rebuilt with `admission_no`/`phone_normalized`/`family_id` |
+
+Future changes ship as new versioned files (`V5__*.sql`, …). Never edit an
+applied file; never re-run an older file after a newer one except via the
+documented re-apply order above.
 
 > **How to run**: In Supabase Dashboard → SQL Editor → paste the file contents → click **Run (F5)**.
 
@@ -241,8 +257,11 @@ gurukul2/
 │       ├── Reports.tsx          # Defaulters & transaction reports
 │       └── Login.tsx            # Auth page
 ├── supabase/
-│   ├── schema.sql               # ★ CHECKPOINT v1 — the ONLY file to run
-│   ├── V2__*.sql …              # Future changes go here (new versioned files)
+│   ├── schema.sql               # ★ CHECKPOINT v1 — apply FIRST
+│   ├── V2__search.sql           # Ranked search + indexes (apply after checkpoint)
+│   ├── V3__families_receipts.sql# Siblings + receipt-first payments
+│   ├── V4__custom_amount.sql    # Per-student fee overrides
+│   ├── V5__admission_receipt_finalize.sql # Admission-no uniqueness + Razorpay receipts
 │   └── functions/
 │       ├── razorpay-create-order/index.ts
 │       └── razorpay-verify/index.ts

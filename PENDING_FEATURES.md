@@ -46,3 +46,10 @@
 - [ ] Replace all `alert()` with toast system.
 - [ ] Per-section error states (lookup failure shouldn't kill whole page).
 - [ ] Optimistic updates for class-defaults / discounts / late-fee rules.
+
+## 6. Siblings + Search Follow-ups (post-V5) — BACKLOG
+
+- [ ] **CSV import `Admission No` column** — `bulk_import_students` doesn't accept an admission number yet (Import CSV screen). Add optional column + parameter.
+- [ ] **Deploy edge functions after V5** — `razorpay-verify` now calls `finalize_transaction_receipt()` to attach receipt numbers on successful online payments. Run `npx supabase functions deploy razorpay-verify` after applying V5, or Razorpay receipts fall back to transaction-ID display (no `RCPT-` number).
+- [ ] **Sibling link from Add Student** — today: link after creation via the `group_add` icon on the Students list. Optionally offer "link to sibling" inline in the Add dialog.
+- [ ] **Family receipt print copies** — receipt v2 prints one copy; add Office copy / Student copy split (planned with receipt v2 print work).

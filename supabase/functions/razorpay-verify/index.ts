@@ -136,19 +136,39 @@ serve(async (req) => {
       .single();
 
     if (claimError || !record) {
-      // Check if it's already successful
+      // Check if it's already successful → idempotent replay
       const { data: existing } = await supabase
         .from("payment_intents")
         .select("*")
         .eq("gateway_order_id", razorpay_order_id)
         .single();
-        
+
       if (existing && existing.status === "success") {
+        // Return the original transaction (+ its receipt number if allocated)
+        let transactionId = existing.id;
+        let receiptNo = null;
+        const { data: txn } = await supabase
+          .from("transactions")
+          .select("id, receipt_id")
+          .eq("idempotency_key", razorpay_payment_id)
+          .maybeSingle();
+        if (txn) {
+          transactionId = txn.id;
+          if (txn.receipt_id) {
+            const { data: rc } = await supabase
+              .from("receipts")
+              .select("receipt_no")
+              .eq("id", txn.receipt_id)
+              .maybeSingle();
+            receiptNo = rc?.receipt_no ?? null;
+          }
+        }
         return new Response(
           JSON.stringify({
             success: true,
             message: "Payment already processed",
-            transaction_id: existing.id,
+            transaction_id: transactionId,
+            receipt_no: receiptNo,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -194,11 +214,34 @@ serve(async (req) => {
       .update({ status: "success" })
       .eq("id", record.id);
 
+    // ── Attach an AY-scoped receipt number (best-effort) ─────
+    // The payment is already committed; if receipt allocation fails we
+    // still return success — a later finalize_transaction_receipt() call
+    // backfills it from the Payments screen / admin console.
+    let receiptNo: string | null = null;
+    try {
+      const { data: rcpt, error: rcptError } = await supabase.rpc(
+        "finalize_transaction_receipt",
+        {
+          p_transaction_id: rpcData?.transaction_id,
+          p_collected_by: "razorpay-auto",
+        }
+      );
+      if (rcptError) {
+        console.error("finalize_transaction_receipt error:", rcptError);
+      } else {
+        receiptNo = rcpt?.receipt_no ?? null;
+      }
+    } catch (rcptErr) {
+      console.error("finalize_transaction_receipt failed:", rcptErr);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
         transaction_id: rpcData?.transaction_id,
         cleared_dues: rpcData?.cleared_dues || [],
+        receipt_no: receiptNo,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
